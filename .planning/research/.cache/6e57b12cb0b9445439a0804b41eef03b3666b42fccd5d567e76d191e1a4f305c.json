@@ -1,0 +1,1 @@
+{"content":"Consensus for small apps in 2025/2026: start with setState for local ephemeral widget state; avoid heavy state management (Riverpod/Bloc/GetX) unless state truly needs to be shared broadly across many widgets/screens; do not over-engineer early.","source":"web","provider":"brave","confidence":"LOW","fetched_at":"2026-08-07T13:46:18.027Z","ttl":86400000,"kind":"web"}
