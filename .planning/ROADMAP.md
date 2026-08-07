@@ -30,7 +30,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Every recorded answer appears immediately in an Exercise History list; tapping an entry plays its recording.
   4. Force-killing the app mid-use and relaunching still shows every already-recorded answer in history — nothing captured before the crash is lost.
   5. The recording and history screens use large, easily readable text and a simple, colorful, friendly visual style (not corporate/minimal-grey).
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+- [ ] 01-01-PLAN.md — Walking Skeleton: scaffold, persistence, and the record→save→replay→history loop
+- [ ] 01-02-PLAN.md — Visual & typography system (warm palette, Baloo 2, mascot)
+- [ ] 01-03-PLAN.md — Crash-safety hardening (error handling, FK enforcement, D-07 force-kill test)
 **UI hint**: yes
 
 ### Phase 2: Full Timed Practice Session (Setup, Loop & Controls)
