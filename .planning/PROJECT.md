@@ -12,16 +12,17 @@ The user can drill spoken English under real time pressure (timed prompt → for
 
 ### Validated
 
-(None yet — ship to validate)
+- ✓ History and audio recordings are stored locally on-device (not in the cloud) — Phase 1
+- ✓ Progress is saved incrementally as the session runs (question-by-question), not only at session end — an app kill/crash mid-session must not lose already-answered questions — Phase 1 (force-kill verified on-device: finished answers survive, an in-flight recording leaves no row and its partial file is swept on next launch)
+- ✓ Visual direction — warm, cartoon-like palette with the rounded Baloo 2 face, large touch targets, reflow-safe at max OS text scale — Phase 1
 
 ### Active
 
 - [ ] Session setup: pick topics (fetched from Firebase, multi-select), CEFR level (A1–C2), question count (1–100), pre-record countdown `t`, max recording duration `d`, and whether to auto-replay `r`
 - [ ] Practice loop: 3s countdown to start → per question: show question + `t`s countdown → auto-start recording → auto-stop at `d`s (or manual stop via a large stop button) → replay if `r` is true → 3s countdown to next question → repeat until `question_count` reached
 - [ ] Persistent app bar during a session with Pause/Resume and Stop; Stop requires confirmation
-- [ ] Exercise history: every session is saved and listed; opening one shows its questions with their recordings, tap a question to play its recording
-- [ ] History and audio recordings are stored locally on-device (not in the cloud)
-- [ ] Progress is saved incrementally as the session runs (question-by-question), not only at session end — an app kill/crash mid-session must not lose already-answered questions
+- [ ] Exercise history: every session is saved and listed; opening one shows its questions with their recordings, tap a question to play its recording — *Phase 1 shipped the list, detail and tap-to-replay against single-answer sessions; multi-question sessions arrive in Phase 2*
+- [ ] The practice loop must run fully offline — no network permission in the release build, no outbound request on any loop path *(emerged in Phase 1: the font was the app's only remote fetch and is now bundled)*
 - [ ] Question bank stored in Firebase with schema `{id, content, subject, level, created_at}`
 - [ ] JSON import feature to bulk-add questions to the bank, format: `{"data": [{"content": "...", "subject": "...", "level": "..."}, ...]}` (id/created_at auto-generated on import)
 - [ ] ~10 general-purpose starter topics seeded in the question bank (e.g. Daily Life, Travel, Sports, Food, Work, Health, Education, Technology, Family, Entertainment)
@@ -60,7 +61,11 @@ The user can drill spoken English under real time pressure (timed prompt → for
 | Topics are derived from distinct `subject` values in the questions collection, no separate topics collection | Matches the user's exact schema request, avoids a second Firebase collection to keep in sync | — Pending |
 | Question bank lives only in Firebase; history/recordings live only on-device | Matches user's explicit local-vs-cloud split | — Pending |
 | No pronunciation scoring/AI grading in v1 | Not requested; keeps scope to the reflex-drill mechanic only | — Pending |
-| Vertical MVP phase structure (working app fast, sliced by user-facing capability) | User wants speed and minimal overhead over exhaustive layering | — Pending |
+| Vertical MVP phase structure (working app fast, sliced by user-facing capability) | User wants speed and minimal overhead over exhaustive layering | ✓ Held — Phase 1 shipped a demoable record→save→replay slice end-to-end |
+| Crash-safe write ordering: finalize the audio file → one SQLite transaction → only then replay | A row must never reference a file that isn't fully on disk; the transaction is the durability boundary | ✓ Phase 1 — force-kill test passed on-device |
+| Baloo 2 bundled as an app asset with `allowRuntimeFetching = false` | The font CDN was the app's only outbound request; bundling keeps the release build network-permission-free and stops the silent fallback to Material's default font | ✓ Phase 1 — confirmed in a release build in airplane mode |
+| Backend seams (`RecorderBackend`, `AudioPlaybackBackend`, `documentsDirProvider`) instead of a DI package | Makes the record/playback/path code unit-testable without a device or platform channel, at the cost of one optional constructor parameter each | ✓ Phase 1 — loop logic is covered by host-run tests |
+| Local DB is raw `sqflite` with `PRAGMA foreign_keys = ON`, no ORM | Two tables and a handful of queries don't justify a codegen step; the pragma makes the schema's REFERENCES clause actually enforce | ✓ Phase 1 |
 
 ## Evolution
 
@@ -80,4 +85,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-07 after initialization*
+*Last updated: 2026-08-08 after Phase 01*
