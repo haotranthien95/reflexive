@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required by package:record to capture spoken practice answers.
+         Recordings are written to app-private storage only — no
+         WRITE_EXTERNAL_STORAGE and no network permission are requested. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application
         android:label="englishreflex"
         android:name="${applicationName}"
