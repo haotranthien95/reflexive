@@ -1,17 +1,45 @@
 import '../models/session_config.dart';
 
-/// Hardcoded rotating practice questions for Phase 1 (D-02).
+/// Hardcoded rotating practice questions (D-02, expanded to ~20 by D-23).
 ///
 /// The real question bank lives in Firestore and arrives in Phase 3; this list
 /// exists only so the record → save → replay loop has varying prompts to
-/// exercise. Each prompt is answerable in well under 60 seconds and kept short
-/// enough to render comfortably in the Display text style.
+/// exercise. Each prompt is answerable in well under the shortest configurable
+/// answer length and kept short enough to render comfortably in the Display
+/// text style.
+///
+/// **Ordering is load-bearing.** [questionAt] draws sequentially and the loop's
+/// question 1 is always `kQuestions.first`, so the original Phase 1 five stay at
+/// the head of the list — moving them would silently move every existing test's
+/// expectations. New prompts are appended, roughly four per entry in
+/// [kSubjects], and are deliberately NOT tagged with a subject or a level: the
+/// placeholder bank carries no metadata (see [PlaceholderQuestionSource]).
 const List<String> kQuestions = [
+  // Daily life
   'What did you do this morning?',
   'Describe your favourite place to relax.',
   'What is one thing you want to learn this year?',
   'Tell me about a meal you really enjoyed.',
   'How do you usually get to work or school?',
+  'What does a perfect weekend look like for you?',
+  'Describe the room you are sitting in right now.',
+  'What is the first thing you do after waking up?',
+  // Work & study
+  'What are you working on at the moment?',
+  'Describe a skill you use every day at work or school.',
+  'Tell me about a time you had to explain something difficult.',
+  'What makes a good teacher or a good manager?',
+  // Travel
+  'Where would you go if you had a free plane ticket?',
+  'Describe a journey that did not go as planned.',
+  'What do you always pack when you travel?',
+  // Food & health
+  'How do you usually stay active during the week?',
+  'Describe a dish you would like to learn to cook.',
+  'What helps you sleep well at night?',
+  // Opinions
+  'Do you prefer working alone or in a team, and why?',
+  'Is it better to plan everything or to improvise?',
 ];
 
 /// The placeholder topic list the Setup screen checkboxes are built from

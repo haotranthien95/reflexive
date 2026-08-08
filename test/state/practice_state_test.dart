@@ -214,17 +214,16 @@ void main() {
     await state.startNewQuestion();
     await state.stopRecording();
 
-    // Ordering contract: finalize -> commit -> anything else (D-08/D-10). The
-    // TAIL moved in plan 02-01 — there is no replay and no re-arm on this path
-    // any more — but the part this test exists to protect, that nothing at all
-    // happens between the recorder finalizing the file and the transaction
-    // committing, is unchanged and still asserted below.
-    expect(calls, ['start', 'stop']);
-
-    // The `sessionsAtFirstPlay` assertion that used to sit here measured a
-    // replay this path no longer runs. The commit-happens-before-replay
-    // ordering it proved is re-proven in test/state/practice_session_test.dart
-    // once plan 02-02 restores the replay under `autoReplay`.
+    // Ordering contract: finalize -> commit -> replay (D-08/D-10). Plan 02-01
+    // moved the tail out and plan 02-02 put the replay back under
+    // `config.autoReplay`, which this config sets — so the third call is the
+    // restored replay, and it lands strictly last.
+    expect(calls, ['start', 'stop', 'play']);
+    expect(
+      audioPlayerService.sessionsAtFirstPlay,
+      1,
+      reason: 'the answer must already be committed when playback starts',
+    );
 
     final sessions = await databaseHelper.listSessions();
     expect(sessions, hasLength(1));
@@ -390,19 +389,21 @@ void main() {
     test('the answer is committed and the loop moves on even with a failing '
         'player', () async {
       await state.startNewQuestion();
-      // Deliberately left armed. Plan 02-01's tail never reaches the player, so
-      // this fake is what makes the `calls` assertion below prove the player
-      // was NEVER INVOKED — rather than merely proving it did not throw.
+      // Genuine again as of plan 02-02: `config.autoReplay` is true, so the
+      // player IS invoked and IS armed to throw. The assertions below therefore
+      // prove a committed answer survives a failing player, rather than merely
+      // proving the player was never reached.
       audioPlayerService.throwOnPlay = true;
 
       await state.stopRecording();
 
       expect(await databaseHelper.listSessions(), hasLength(1));
-      expect(state.phase, PracticePhase.complete);
-      expect(calls, ['start', 'stop']);
-      // Plan 02-02 restores the real replay-failure guard — a committed answer
-      // that survives a throwing player — in practice_session_test.dart, under
-      // `autoReplay: true`.
+      expect(calls, ['start', 'stop', 'play']);
+      expect(
+        state.phase,
+        PracticePhase.complete,
+        reason: 'a cosmetic playback failure must not strand the session',
+      );
     });
 
     test('a save failure shows the same copy and does NOT auto-restart '
