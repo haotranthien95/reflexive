@@ -8,6 +8,7 @@ import '../models/session_config.dart';
 import '../services/audio_player_service.dart';
 import '../services/recording_service.dart';
 import '../state/practice_state.dart';
+import '../widgets/countdown_ring.dart';
 import '../widgets/mascot.dart';
 import '../widgets/phase_control.dart';
 import 'session_detail_screen.dart';
@@ -163,11 +164,23 @@ class _PracticeScreenState extends State<PracticeScreen> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Mascot(
-                                isRecording:
-                                    _state.phase == PracticePhase.recording,
-                                isError: hasError,
-                              ),
+                              // The anchor slot. Every phase but `reading`
+                              // shows the mascot; `reading` swaps in the `t`
+                              // ring, which occupies the SAME 144px box — the
+                              // swap is why neither countdown can be mistaken
+                              // for the other, and the matching box is why it
+                              // costs no layout shift (D-22).
+                              if (_state.phase == PracticePhase.reading)
+                                CountdownRing(
+                                  remainingSeconds: _state.countdownSeconds,
+                                  totalSeconds: widget.config.thinkingSeconds,
+                                )
+                              else
+                                Mascot(
+                                  isRecording:
+                                      _state.phase == PracticePhase.recording,
+                                  isError: hasError,
+                                ),
                               const SizedBox(height: 32), // xl
                               // The focus slot. Its three occupants swap by
                               // phase and the question card is HIDDEN for two
@@ -196,6 +209,11 @@ class _PracticeScreenState extends State<PracticeScreen> {
                                     unawaited(_state.startNewQuestion()),
                                 recordingSecondsRemaining:
                                     _state.recordingSecondsRemaining,
+                                // "Get ready…" only for the session's own
+                                // 3·2·1; every later one counts INTO a
+                                // question, so it says "Next question…". `k`
+                                // has already moved by then (LOOP-07).
+                                isFirstQuestion: _state.questionNumber == 1,
                                 // Null until the session has a committed
                                 // `sessions` row (D-26), which renders the
                                 // button DISABLED rather than opening an empty
@@ -258,7 +276,11 @@ class _CountdownGlyph extends StatelessWidget {
 /// The completion state's focus slot (D-27).
 ///
 /// Deliberately never scores, ranks or grades the answers — this app is a drill
-/// tool, and "Nice work!" plus a count is the whole of what it may say.
+/// tool, and the headline below plus a count is the whole of what it may say.
+///
+/// The count is [answeredCount] — the COMMITTED row count, never the number of
+/// questions attempted. A session stopped early reaches this same state; only
+/// the number differs, and the copy never frames stopping early as a failure.
 class _CompletionHeadline extends StatelessWidget {
   const _CompletionHeadline({required this.answeredCount});
 

@@ -91,10 +91,23 @@ class PracticeState extends ChangeNotifier {
   String currentQuestion = kQuestions.first;
 
   /// 1-based position in the session — the `k` of "Question k of N".
+  ///
+  /// Increments at the START of the inter-question get-ready countdown, so the
+  /// app-bar title always names the question the user is ABOUT to face.
+  ///
+  /// **Deliberately NOT the same field as [answeredCount], and never derived
+  /// from it.** The two disagree for the whole of every question: while question
+  /// 3 is being answered, `questionNumber` is 3 and `answeredCount` is 2. Merging
+  /// them — or computing one from the other — is precisely the drift bug where
+  /// the completion screen claims more answers than the session detail can show,
+  /// because a save failure or an early stop moves one and not the other.
   int questionNumber = 1;
 
-  /// Answers actually committed to the database so far. Incremented only AFTER
-  /// the transaction returns, so it can never exceed the committed row count.
+  /// Answers actually committed to the database so far — the number the
+  /// completion screen promises and the session detail must be able to show.
+  ///
+  /// Incremented only AFTER `appendAnswer` returns, so it can never exceed the
+  /// committed row count. See [questionNumber] for why these are two fields.
   int answeredCount = 0;
 
   /// Whatever countdown is currently on screen: the 3·2·1 in [getReady], `t` in
@@ -181,6 +194,13 @@ class PracticeState extends ChangeNotifier {
     countdown.start();
   }
 
+  /// The ONE implementation of "3·2·1, then the question, then arm".
+  ///
+  /// Both entries into a question go through here — [startSession] for the
+  /// first (LOOP-01) and the post-commit tail of [stopRecording] for every one
+  /// after it (LOOP-07) — so the phase ORDER exists in exactly one place. Two
+  /// copies is how the session-start path and the between-questions path drift
+  /// apart, and it is also the single point a later plan's pause has to freeze.
   void _enterGetReady() {
     phase = PracticePhase.getReady;
     countdownSeconds = kGetReadySeconds;
@@ -402,17 +422,47 @@ class PracticeState extends ChangeNotifier {
     // screen has no use for.
     if (_disposed) return;
 
-    // Both counters move only AFTER the commit returned, so neither can ever
-    // claim more answers than the database actually holds.
+    // The counter moves only AFTER the commit returned, so it can never claim
+    // more answers than the database actually holds.
     answeredCount += 1;
     sessionStartedAt ??= DateTime.now();
     recordingSecondsRemaining = null;
 
-    // Plan 02-01 deliberately ends the session on the first committed answer:
-    // this is the tracer's far end, not the finished loop. Plan 02-02 restores
-    // the optional replay (`config.autoReplay`) and the inter-question advance
-    // here, and only then does `questionCount` start deciding when to complete.
-    phase = PracticePhase.complete;
-    _notify();
+    // SETUP-06: the replay is the SESSION's choice now, not Phase 1's hardcoded
+    // always-on (D-10). With `r` off the player is not touched at all — not
+    // called and then ignored, not called with a zero volume: an untouched
+    // player is what makes "off" observable in a test and silent on a device.
+    //
+    // The commit above happens-before this, unconditionally. That ordering is
+    // the crash-safety contract (D-08/D-10): the answer survives a failure of
+    // anything below, and a replay failure is therefore only ever a cosmetic
+    // loss. The catch swallows for exactly that reason — the loop must keep
+    // moving, because the user's answer is already safe.
+    if (config.autoReplay) {
+      phase = PracticePhase.replaying;
+      _notify();
+      try {
+        await audioPlayerService.play(finalizedPath, awaitCompletion: true);
+      } catch (_) {
+        // Cosmetic only. See above — never a reason to strand the loop.
+      }
+      if (_disposed) return;
+    }
+
+    // LOOP-08: the session ends on the COMMITTED count, never on
+    // `questionNumber`. A save failure at the last question therefore leaves the
+    // session one answer short and does not fake a completion (D-27).
+    if (answeredCount >= config.questionCount) {
+      phase = PracticePhase.complete;
+      _notify();
+      return;
+    }
+
+    // LOOP-07: `k` moves first, so the app-bar title names the question the
+    // countdown is counting into — then the same 3·2·1 the session opened with.
+    // Nothing runs between the replay resolving and this: the get-ready and the
+    // replay are never concurrent (D-22).
+    questionNumber += 1;
+    _enterGetReady();
   }
 }

@@ -9,6 +9,7 @@ Widget _host(
   VoidCallback? onStop,
   VoidCallback? onStart,
   int? recordingSecondsRemaining,
+  bool isFirstQuestion = true,
   VoidCallback? onViewSession,
   VoidCallback? onBackToSetup,
 }) {
@@ -20,6 +21,7 @@ Widget _host(
           onStop: onStop ?? () {},
           onStart: onStart ?? () {},
           recordingSecondsRemaining: recordingSecondsRemaining,
+          isFirstQuestion: isFirstQuestion,
           // Defaulted to no-ops so the totality loop below — which pumps EVERY
           // phase through this helper — never hands the completion control a
           // null it would render as a disabled dead end.
@@ -144,6 +146,28 @@ void main() {
 
     await tester.pumpWidget(_host(PracticePhase.reading));
     expect(find.text('Speak when the timer hits 0'), findsOneWidget);
+  });
+
+  testWidgets('the get-ready caption names WHICH 3·2·1 the user is watching',
+      (tester) async {
+    // The session's own countdown and the one between two questions are the
+    // same surface under the same key. The caption is the only thing that
+    // distinguishes "we are starting" from "keep going" (LOOP-01 vs LOOP-07).
+    await tester.pumpWidget(_host(PracticePhase.getReady));
+    expect(find.text('Get ready…'), findsOneWidget);
+    expect(find.text('Next question…'), findsNothing);
+
+    await tester.pumpWidget(
+      _host(PracticePhase.getReady, isFirstQuestion: false),
+    );
+    expect(find.text('Next question…'), findsOneWidget);
+    expect(find.text('Get ready…'), findsNothing);
+
+    // Still exactly ONE keyed control — the variant did not add a second.
+    expect(
+      find.byKey(kPhaseControlKeys[PracticePhase.getReady]!),
+      findsOneWidget,
+    );
   });
 
   testWidgets('the complete control offers both ways out of the session',
