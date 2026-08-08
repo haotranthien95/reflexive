@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:englishreflex/db/database_helper.dart';
+import 'package:englishreflex/models/session_config.dart';
 import 'package:englishreflex/services/audio_player_service.dart';
 import 'package:englishreflex/services/recording_service.dart';
 import 'package:englishreflex/state/practice_state.dart';
@@ -36,7 +37,12 @@ class FakeRecordingService extends RecordingService {
   bool throwPermissionDenied = false;
 
   @override
-  Future<void> start(String absoluteFilePath, {void Function()? onAutoStop}) async {
+  Future<void> start(
+    String absoluteFilePath, {
+    void Function()? onAutoStop,
+    Duration? maxDuration,
+    void Function(int remainingSeconds)? onTick,
+  }) async {
     if (throwPermissionDenied) {
       calls.add('start-denied');
       throw const RecordingPermissionDeniedException();
@@ -101,6 +107,22 @@ class FailingDatabaseHelper extends DatabaseHelper {
 }
 
 void main() {
+  /// One shared session configuration for every [PracticeState] built here.
+  ///
+  /// These tests drive `startNewQuestion()`/`stopRecording()` directly rather
+  /// than running the timed loop, so only `answerSeconds` (the `d` deadline
+  /// handed to the recorder) actually reaches the code under test — but the
+  /// whole value is real, so a field added to [SessionConfig] later shows up
+  /// here as a compile error rather than as a silent default.
+  const config = SessionConfig(
+    topics: ['Daily life'],
+    level: 'B1',
+    questionCount: 1,
+    thinkingSeconds: 3,
+    answerSeconds: 60,
+    autoReplay: true,
+  );
+
   late Directory tempDir;
   late DatabaseHelper databaseHelper;
   late List<String> calls;
@@ -133,6 +155,7 @@ void main() {
       recordingService: recordingService,
       audioPlayerService: audioPlayerService,
       databaseHelper: databaseHelper,
+      config: config,
     );
   });
 
@@ -180,16 +203,22 @@ void main() {
     expect(state.phase, PracticePhase.recording);
   });
 
-  test('stopRecording saves BEFORE replaying, then resets and re-arms',
+  test('stopRecording saves BEFORE anything else, then completes the session',
       () async {
     await state.startNewQuestion();
     await state.stopRecording();
 
-    // Ordering contract: finalize -> save -> replay -> reset (D-08/D-10/D-03).
-    expect(calls, ['start', 'stop', 'play', 'start']);
+    // Ordering contract: finalize -> commit -> anything else (D-08/D-10). The
+    // TAIL moved in plan 02-01 — there is no replay and no re-arm on this path
+    // any more — but the part this test exists to protect, that nothing at all
+    // happens between the recorder finalizing the file and the transaction
+    // committing, is unchanged and still asserted below.
+    expect(calls, ['start', 'stop']);
 
-    // The DB row was already committed when playback started.
-    expect(audioPlayerService.sessionsAtFirstPlay, 1);
+    // The `sessionsAtFirstPlay` assertion that used to sit here measured a
+    // replay this path no longer runs. The commit-happens-before-replay
+    // ordering it proved is re-proven in test/state/practice_session_test.dart
+    // once plan 02-02 restores the replay under `autoReplay`.
 
     final sessions = await databaseHelper.listSessions();
     expect(sessions, hasLength(1));
@@ -199,8 +228,8 @@ void main() {
     expect(answers.single.audioPath, startsWith('recordings/'));
     expect(answers.single.audioPath.startsWith('/'), isFalse);
 
-    // Reset loop: the screen is recording a fresh question again (D-03).
-    expect(state.phase, PracticePhase.recording);
+    // The session comes to rest in the completion state (D-27).
+    expect(state.phase, PracticePhase.complete);
   });
 
   test('a losing stop signal is surfaced as a recoverable failure and writes '
@@ -227,6 +256,11 @@ void main() {
   test('two recordings in a row produce two separate sessions', () async {
     await state.startNewQuestion();
     await state.stopRecording();
+    // EXPLICIT second recording. The removed replay-and-re-arm tail used to
+    // leave one running; without it a bare second `stopRecording()` hits the
+    // no-op guard pinned by the test above and only one session is ever
+    // written.
+    await state.startNewQuestion();
     await state.stopRecording();
 
     final sessions = await databaseHelper.listSessions();
@@ -243,6 +277,10 @@ void main() {
     await state.startNewQuestion();
     final firstPath = recordingService.lastRequestedPath;
     await state.stopRecording();
+    // The second path now comes from an EXPLICIT second recording rather than
+    // from the removed re-arm. The guarantee under test is unchanged; only the
+    // way the second path is obtained is.
+    await state.startNewQuestion();
     final secondPath = recordingService.lastRequestedPath;
 
     // The millisecond half of the name can repeat; the entropy suffix cannot.
@@ -268,6 +306,7 @@ void main() {
       recordingService: recordingService,
       audioPlayerService: audioPlayerService,
       databaseHelper: databaseHelper,
+      config: config,
     );
 
     await racingState.startNewQuestion();
@@ -339,18 +378,22 @@ void main() {
       expect(await databaseHelper.listSessions(), isEmpty);
     });
 
-    test('a replay failure never blocks the loop — the answer is already saved',
-        () async {
+    test('the answer is committed and the loop moves on even with a failing '
+        'player', () async {
       await state.startNewQuestion();
+      // Deliberately left armed. Plan 02-01's tail never reaches the player, so
+      // this fake is what makes the `calls` assertion below prove the player
+      // was NEVER INVOKED — rather than merely proving it did not throw.
       audioPlayerService.throwOnPlay = true;
 
       await state.stopRecording();
 
-      expect(
-        state.phase,
-        anyOf(PracticePhase.recording, PracticePhase.arming),
-      );
       expect(await databaseHelper.listSessions(), hasLength(1));
+      expect(state.phase, PracticePhase.complete);
+      expect(calls, ['start', 'stop']);
+      // Plan 02-02 restores the real replay-failure guard — a committed answer
+      // that survives a throwing player — in practice_session_test.dart, under
+      // `autoReplay: true`.
     });
 
     test('a save failure shows the same copy and does NOT auto-restart '
@@ -360,6 +403,7 @@ void main() {
         recordingService: recordingService,
         audioPlayerService: audioPlayerService,
         databaseHelper: failingHelper,
+        config: config,
       );
       addTearDown(failingState.dispose);
 
@@ -380,10 +424,15 @@ void main() {
 
     test('every injected failure leaves the loop in a recoverable phase',
         () async {
+      // `complete` belongs here for the same reason the other three do: it
+      // carries real affordances. The completion state renders both
+      // "View this session" and "Back to setup" (D-27), so a loop that comes to
+      // rest there is not a dead end the user has to escape by force-quitting.
       const recoverable = <PracticePhase>{
         PracticePhase.error,
         PracticePhase.recording,
         PracticePhase.arming,
+        PracticePhase.complete,
       };
 
       // 1. The microphone is denied.

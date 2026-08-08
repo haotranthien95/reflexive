@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import 'screens/practice_screen.dart';
+import 'screens/setup_screen.dart';
 
 /// Makes the bundled `assets/fonts/Baloo2-SemiBold.ttf` the ONLY way Baloo 2
 /// can load, and registers its licence.
@@ -127,7 +127,9 @@ class EnglishReflexApp extends StatelessWidget {
       // Deliberately no `builder:` MediaQuery override here — every size above
       // must scale with the OS accessibility text-size setting (UI-01). Never
       // pin textScaler/textScaleFactor to a fixed value.
-      home: const PracticeScreen(),
+      // Setup, not Practice (D-28): a session is now configured before it runs,
+      // and the practice screen takes that configuration as an argument.
+      home: const SetupScreen(),
     );
   }
 }

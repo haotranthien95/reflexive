@@ -8,6 +8,9 @@ Widget _host(
   PracticePhase phase, {
   VoidCallback? onStop,
   VoidCallback? onStart,
+  int? recordingSecondsRemaining,
+  VoidCallback? onViewSession,
+  VoidCallback? onBackToSetup,
 }) {
   return MaterialApp(
     home: Scaffold(
@@ -16,6 +19,12 @@ Widget _host(
           phase: phase,
           onStop: onStop ?? () {},
           onStart: onStart ?? () {},
+          recordingSecondsRemaining: recordingSecondsRemaining,
+          // Defaulted to no-ops so the totality loop below — which pumps EVERY
+          // phase through this helper — never hands the completion control a
+          // null it would render as a disabled dead end.
+          onViewSession: onViewSession ?? () {},
+          onBackToSetup: onBackToSetup ?? () {},
         ),
       ),
     ),

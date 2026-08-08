@@ -28,11 +28,26 @@ Future<Directory> appDocumentsDir() => documentsDirProvider();
 const String kRecordingsDirName = 'recordings';
 
 /// Resolves `<appDocumentsDir>/recordings`, creating it if it does not exist.
+///
+/// The existence check and the creation are deliberately SYNCHRONOUS. This sits
+/// directly on the arming path — `PracticeState` awaits it to choose the
+/// recording's file name, one frame before the microphone goes live — and an
+/// `await` there is an async gap between "the `t` countdown hit 0" and "the
+/// recorder is armed" for what is a single `stat` on a directory that exists on
+/// every launch after the first. Keeping it synchronous means arming is gated
+/// only on the recorder itself, never on the filesystem.
+///
+/// It is also what makes the loop drivable under `flutter_test`'s fake clock:
+/// that clock advances timers and drains microtasks but never yields to the
+/// real event loop, so a real `dart:io` future awaited from inside a
+/// `testWidgets` body never resolves and the phase machine stalls in `arming`
+/// forever. Two sync syscalls per question cost nothing; a stalled arming
+/// handover cost this loop its end-to-end test.
 Future<Directory> ensureRecordingsDir() async {
   final docsDir = await appDocumentsDir();
   final dir = Directory(p.join(docsDir.path, kRecordingsDirName));
-  if (!await dir.exists()) {
-    await dir.create(recursive: true);
+  if (!dir.existsSync()) {
+    dir.createSync(recursive: true);
   }
   return dir;
 }

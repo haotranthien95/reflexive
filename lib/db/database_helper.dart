@@ -165,6 +165,23 @@ CREATE TABLE $kQuestionAnswersTable (
     });
   }
 
+  /// The session with [id], or null when no such row exists.
+  ///
+  /// Read-only, and scoped by a parameterised `where` like every other query
+  /// here. Exists so the completion state (D-27) can hand the real [Session] to
+  /// the detail screen rather than re-listing every session to find one.
+  Future<Session?> findSession(int id) async {
+    final db = await database;
+    final rows = await db.query(
+      kSessionsTable,
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return Session.fromMap(rows.first);
+  }
+
   /// Every saved session, most recent first (HIST-01).
   Future<List<Session>> listSessions() async {
     final db = await database;

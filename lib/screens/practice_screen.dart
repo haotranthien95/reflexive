@@ -3,19 +3,45 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../db/database_helper.dart';
+import '../models/session.dart';
+import '../models/session_config.dart';
 import '../services/audio_player_service.dart';
 import '../services/recording_service.dart';
 import '../state/practice_state.dart';
-import '../utils/audio_paths.dart';
 import '../widgets/mascot.dart';
 import '../widgets/phase_control.dart';
-import 'history_screen.dart';
+import 'session_detail_screen.dart';
 
-/// The single practice screen: a question appears and recording starts the
-/// instant the screen opens (D-01). No Start button, no elapsed timer, no
-/// countdown (D-04) — just a big Stop button while recording.
+/// The 3·2·1 get-ready numeral: Display × 4, coral, a single glyph.
+///
+/// Deliberately ONE named constant used at exactly ONE call site, and derived
+/// from `displayLarge` rather than authored as a fifth type-scale step — a
+/// second use of this constant is meant to be visible in review.
+const double kCountdownGlyphSize = 128;
+
+/// One configured practice session, from the 3·2·1 get-ready countdown through
+/// to the completion state.
+///
+/// Takes its whole configuration as a value (D-28): it stopped being the app's
+/// `home:` when Setup took that role, and every timing it uses is the user's,
+/// not a constant.
 class PracticeScreen extends StatefulWidget {
-  const PracticeScreen({super.key});
+  const PracticeScreen({
+    super.key,
+    required this.config,
+    this.recordingService,
+    this.audioPlayerService,
+    this.databaseHelper,
+  });
+
+  final SessionConfig config;
+
+  /// Optional injected collaborators — the seam a host test uses to run this
+  /// screen without a platform channel. Null in production, where the real
+  /// implementations are constructed here.
+  final RecordingService? recordingService;
+  final AudioPlayerService? audioPlayerService;
+  final DatabaseHelper? databaseHelper;
 
   @override
   State<PracticeScreen> createState() => _PracticeScreenState();
@@ -28,29 +54,19 @@ class _PracticeScreenState extends State<PracticeScreen> {
   void initState() {
     super.initState();
     _state = PracticeState(
-      recordingService: RecordingService(),
-      audioPlayerService: AudioPlayerService(),
-      databaseHelper: DatabaseHelper(),
+      recordingService: widget.recordingService ?? RecordingService(),
+      audioPlayerService: widget.audioPlayerService ?? AudioPlayerService(),
+      databaseHelper: widget.databaseHelper ?? DatabaseHelper(),
+      config: widget.config,
     );
-    _bootstrap();
-  }
-
-  /// Sweeps orphaned recordings, then arms the first recording.
-  ///
-  /// The sweep is awaited to completion *before* [PracticeState.startNewQuestion]
-  /// picks a file name, so the file this session is about to write can never be
-  /// a deletion candidate. See [pruneOrphanRecordings]'s caller contract.
-  Future<void> _bootstrap() async {
-    try {
-      await pruneOrphanRecordings(
-        await _state.databaseHelper.listReferencedAudioPaths(),
-      );
-    } catch (_) {
-      // Cleanup is best-effort; never let it stand between the user and the
-      // microphone.
-    }
-    // Reflex framing: recording begins immediately, with no user action.
-    await _state.startNewQuestion();
+    // Synchronous by design: `startSession()` enters `getReady` before the
+    // first build, so the construction-time `arming` phase is never rendered.
+    //
+    // The orphan sweep does NOT run here any more — it moved to `SetupScreen`'s
+    // `initState` with its caller contract, which is now satisfied earlier
+    // rather than later: it must complete before any recording file name is
+    // chosen, and Setup is the first screen the user passes through.
+    unawaited(_state.startSession());
   }
 
   @override
@@ -70,37 +86,59 @@ class _PracticeScreenState extends State<PracticeScreen> {
     super.dispose();
   }
 
-  void _openHistory() {
-    Navigator.of(context).push(
+  /// Opens the session just finished, from the completion state (D-27).
+  ///
+  /// Reads the row rather than synthesising a [Session] from local state: the
+  /// `created_at` the detail screen shows must be the committed one.
+  Future<void> _openThisSession() async {
+    final int? id = _state.sessionId;
+    if (id == null) return;
+    final Session? session = await _state.databaseHelper.findSession(id);
+    if (!mounted || session == null) return;
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => HistoryScreen(databaseHelper: _state.databaseHelper),
+        builder: (_) => SessionDetailScreen(
+          session: session,
+          databaseHelper: _state.databaseHelper,
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('EnglishReflex'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.history),
-            tooltip: 'Exercise History',
-            onPressed: _openHistory,
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: ListenableBuilder(
-          listenable: _state,
-          builder: (context, _) {
-            final bool hasError = _state.phase == PracticePhase.error;
+    final theme = Theme.of(context);
 
+    // Wraps the whole Scaffold, not just the body: the app-bar title carries
+    // "Question k of N" and switches to "Session complete", so the chrome has
+    // to rebuild with the loop too.
+    return ListenableBuilder(
+      listenable: _state,
+      builder: (context, _) {
+        final bool hasError = _state.phase == PracticePhase.error;
+        final bool isComplete = _state.phase == PracticePhase.complete;
+
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(
+              isComplete
+                  ? 'Session complete'
+                  : 'Question ${_state.questionNumber} of '
+                      '${widget.config.questionCount}',
+              style: theme.textTheme.headlineSmall,
+              // A truncated "Question 100 of 100" at max text scale is
+              // acceptable; a RenderFlex overflow is not.
+              overflow: TextOverflow.ellipsis,
+            ),
+            // The user cannot navigate away from an active session (D-29), and
+            // there is deliberately no History icon here — it lives on Setup.
+            automaticallyImplyLeading: false,
+          ),
+          body: SafeArea(
             // The banner is docked above the question, never instead of it:
             // UI-SPEC requires the question screen stay visible so the user is
             // not left staring at a blank, dead-end screen.
-            return Column(
+            child: Column(
               children: [
                 if (hasError)
                   _ErrorBanner(
@@ -131,7 +169,21 @@ class _PracticeScreenState extends State<PracticeScreen> {
                                 isError: hasError,
                               ),
                               const SizedBox(height: 32), // xl
-                              _QuestionCard(question: _state.currentQuestion),
+                              // The focus slot. Its three occupants swap by
+                              // phase and the question card is HIDDEN for two
+                              // of them (D-22): during the 3·2·1 there is
+                              // nothing to read yet, and at the end there is
+                              // nothing left to answer.
+                              if (_state.phase == PracticePhase.getReady)
+                                _CountdownGlyph(value: _state.countdownSeconds)
+                              else if (isComplete)
+                                _CompletionHeadline(
+                                  answeredCount: _state.answeredCount,
+                                )
+                              else
+                                _QuestionCard(
+                                  question: _state.currentQuestion,
+                                ),
                               const SizedBox(height: 48), // 2xl
                               // Every phase renders exactly one control here —
                               // the mapping is total and exhaustively tested,
@@ -142,6 +194,18 @@ class _PracticeScreenState extends State<PracticeScreen> {
                                     unawaited(_state.stopRecording()),
                                 onStart: () =>
                                     unawaited(_state.startNewQuestion()),
+                                recordingSecondsRemaining:
+                                    _state.recordingSecondsRemaining,
+                                // Null until the session has a committed
+                                // `sessions` row (D-26), which renders the
+                                // button DISABLED rather than opening an empty
+                                // detail screen. Task 2 is what starts
+                                // populating `sessionId`.
+                                onViewSession: _state.sessionId == null
+                                    ? null
+                                    : () => unawaited(_openThisSession()),
+                                onBackToSetup: () =>
+                                    Navigator.of(context).maybePop(),
                               ),
                             ],
                           ),
@@ -151,10 +215,76 @@ class _PracticeScreenState extends State<PracticeScreen> {
                   ),
                 ),
               ],
-            );
-          },
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// The 3·2·1 numeral, in a FIXED-height box so the focus slot does not jump as
+/// the glyph changes width (3 → 2 → 1).
+class _CountdownGlyph extends StatelessWidget {
+  const _CountdownGlyph({required this.value});
+
+  final int value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return SizedBox(
+      key: const Key('practice-countdown-glyph'),
+      height: 160,
+      child: Center(
+        // Scales down rather than overflowing at the largest OS text-scale
+        // setting — the same containment the 96px STOP label uses.
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            '$value',
+            style: theme.textTheme.displayLarge!.copyWith(
+              fontSize: kCountdownGlyphSize,
+              color: theme.colorScheme.primary,
+            ),
+          ),
         ),
       ),
+    );
+  }
+}
+
+/// The completion state's focus slot (D-27).
+///
+/// Deliberately never scores, ranks or grades the answers — this app is a drill
+/// tool, and "Nice work!" plus a count is the whole of what it may say.
+class _CompletionHeadline extends StatelessWidget {
+  const _CompletionHeadline({required this.answeredCount});
+
+  final int answeredCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Column(
+      key: const Key('practice-complete'),
+      children: [
+        Text(
+          'Nice work!',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.displayLarge,
+        ),
+        const SizedBox(height: 8), // sm
+        Text(
+          answeredCount == 1
+              ? '1 answer recorded.'
+              : '$answeredCount answers recorded.',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodyLarge,
+        ),
+      ],
     );
   }
 }
