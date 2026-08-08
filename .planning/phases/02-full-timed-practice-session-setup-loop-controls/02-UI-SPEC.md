@@ -1,7 +1,7 @@
 ---
 phase: 2
 slug: full-timed-practice-session-setup-loop-controls
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-08-08
@@ -491,25 +491,174 @@ removes the app-bar controls from those phases, their captions must be upgraded 
 
 ## UI Considerations
 
-Applicable state considerations resolved: 9 covered, 4 backstop, 1 unresolved
+Shape-rooted state coverage from the UI-consideration probe over the 14 surfaces this phase
+introduces or changes. Element kinds were confirmed (not left to the prose heuristic) before
+resolution, so no surface was under-covered by a partial cue match.
 
-| Category | Element(s) | Status | Resolution / Reason |
-|----------|------------|--------|---------------------|
-| empty | Topic checkbox list (list-collection) | 🧪 backstop | Copy is specified in the Copywriting Contract ("No topics yet" / "Import some questions and your topics will show up here."). **Not reachable in Phase 2** — the subject list is a hardcoded non-empty constant (D-19); the branch becomes live when Phase 3 supplies it from Firestore. Verify then, with a held-out empty-list widget test |
-| loading | Topic checkbox list (list-collection) | ✅ covered | No loading state exists in Phase 2 — the placeholder subject list is a synchronous constant, so Setup renders fully populated on first frame. Dismissal reason recorded rather than left silent; Phase 3 introduces the async fetch and owns the loading treatment |
-| error | Topic checkbox list (list-collection) | ✅ covered | No fetch, therefore no fetch failure, in Phase 2. Recording/save failures reuse the Phase 1 error banner and its verbatim copy — Phase 2 adds no new user-facing failure string |
-| populated | Topic checkbox list (list-collection) | ✅ covered | ~5 placeholder subjects render as 64px checkbox rows in a peach card with coral checks; Start enables on the first check (SETUP-07 genuinely enforced) |
-| zero-one-many | Topic selection → Start gate | ✅ covered | Zero checked ⇒ Start disabled + "Pick at least one topic to start." One or many checked ⇒ Start enabled; no upper limit and no "select all" affordance |
-| zero-one-many | Stop-confirmation body copy | ✅ covered | N = 0 never reaches the dialog's saved-answers wording (0-answer stop pops straight to Setup, D-26). N = 1 and N ≥ 2 have distinct specified strings ("Your 1 answer is already saved…" / "Your {N} answers are already saved…") |
-| zero-one-many | Completion sub-line | ✅ covered | "1 answer recorded." / "{N} answers recorded."; N = 0 is unreachable per D-26/D-27 |
-| zero-one-many | Session detail with many answers (list-collection) | 🧪 backstop | `session_detail_screen.dart` is already a `ListView` built for N rows (D-06), but Phase 1 only ever produced sessions of exactly 1. Phase 2 produces the first genuinely multi-answer sessions — verify a completed 10-question session renders all 10 rows, including repeated question text from D-23 cycling |
-| populated | Paused state across every pausable phase | ✅ covered | Banner + frozen focus slot + pulse-ring-off + RESUME pill, specified per phase in the Layout Contract; the two banner variants (user pause vs. D-31 interruption) are both locked copy |
-| overflow | Setup screen at the largest OS text-scale setting (static-content / form) | 🧪 backstop | Body is a `SingleChildScrollView` with the Start footer pinned outside it, so the primary CTA is always reachable and the content scrolls rather than clips. Verify no `RenderFlex` overflow at max text scale with all sections expanded |
-| overflow | CEFR chip row (interactive-control) | ✅ covered | `Wrap(spacing: 8, runSpacing: 8)` — the row wraps to two (or more) lines at large text scale by design (D-17); wrapping is the specified behaviour, not a failure |
-| overflow | Session app-bar title ("Question 100 of 100") (nav) | ✅ covered | Heading style with `TextOverflow.ellipsis`; a truncated title is acceptable, an overflow is not |
-| long-text | Question prompt in `reading` / `recording` / `paused` (static-content) | 🧪 backstop | Display 32/600 wraps with no truncation inside the peach card. Verify the longest of the ~20 placeholder prompts (D-23) renders without clipping at the largest OS text-scale setting, in the countdown, recording and paused states |
-| long-text | Fixed-size targets containing text (interactive-control) | ✅ covered | The 96px STOP circle, the 160px 3·2·1 numeral box and the 96px ring all use `FittedBox(fit: BoxFit.scaleDown)` — the established Phase 1 pattern — so text scales down inside a fixed target instead of overflowing it |
-| overflow | `d` auto-stop landing in the same frame as a Pause tap (interactive-control) | ⚠ unresolved | No visual treatment is specified for the exact frame where the `d` deadline fires simultaneously with a Pause tap. Planner assumption: **the auto-stop wins** and the loop proceeds through `saving` → `replaying`, with the pause request applied at the next pausable phase rather than dropped. This mirrors Phase 1's unresolved auto-stop-vs-manual-Stop race, and the same "first signal wins, second is a no-op" principle should govern it |
+**Coverage: 85 applicable — 75 ✅ covered, 8 🧪 backstop, 2 ⚠ unresolved** (plus 1 carried-forward
+interaction race, below). Empty-state and error-state *copy* lives in `## Copywriting Contract`; the
+rows below reference it rather than restating it.
+
+### E1 — Topic checkbox list, Setup (form + list-collection + interactive-control)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| empty | 🧪 backstop | Copy is locked ("No topics yet" / "Import some questions and your topics will show up here."). **Unreachable in Phase 2** — the subject list is a hardcoded non-empty constant (D-19); the branch goes live when Phase 3 sources it from Firestore. Verify with a held-out empty-list widget test |
+| loading | ✅ covered | No loading state exists — the placeholder subject list is a synchronous constant, so Setup renders fully populated on the first frame. Phase 3 introduces the async fetch and owns the loading treatment |
+| error | ✅ covered | No fetch, therefore no fetch failure. Phase 2 adds no new user-facing failure string (Copywriting Contract, Error state row) |
+| populated | ✅ covered | ~5 placeholder subjects as 64px `CheckboxListTile` rows in a peach card, coral check on brown |
+| partial | ✅ covered | Subjects are complete constant strings with no optional per-row fields — a partially-populated row shape does not exist |
+| overflow | ✅ covered | The Setup body is a `SingleChildScrollView`; the card grows and the page scrolls. The Start footer is pinned outside it, so the CTA never scrolls away |
+| zero-one-many | ✅ covered | Zero checked ⇒ Start disabled + "Pick at least one topic to start." One or many ⇒ Start enabled; no upper limit, no "select all" |
+| long-text | 🧪 backstop | Titles are Label 18/600 in a 64px row. Verify a long subject name wraps (row grows) rather than clipping at the largest OS text-scale setting |
+
+### E2 — CEFR level chip row (form + interactive-control + list-collection)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| empty | ✅ covered | The six CEFR levels are a fixed closed set — the row can never be empty |
+| loading | ✅ covered | Constant data, local selection state, no async |
+| error | ✅ covered | No failure path — selection cannot fail |
+| populated | ✅ covered | Six `ChoiceChip`s, **B1** pre-selected (D-17); unselected peach/brown, selected coral/brown, `showCheckmark: false` |
+| partial | ✅ covered | Single-select invariant — exactly one chip is always selected, so there is no "nothing chosen" state to design |
+| overflow | ✅ covered | `Wrap(spacing: 8, runSpacing: 8)` wraps to two or more lines at large text scale — that wrap is the specified behaviour, not a failure (D-17) |
+| zero-one-many | ✅ covered | Always exactly six chips, always exactly one selected — the axis is fixed |
+| long-text | ✅ covered | Labels are two-character constants and cannot grow |
+
+### E3 — The three numeric readout+slider settings (form + interactive-control)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| empty | ✅ covered | A slider always carries a value; the D-16 defaults (10 / 5 sec / 60 sec) are the first-frame state. There is no unfilled state |
+| loading | ✅ covered | Local state only, no async |
+| error | ✅ covered | `min`/`max`/`divisions` make an out-of-range value unrepresentable, so no validation-error treatment is needed — the constraint is enforced by the widget, not by a message |
+| partial | ✅ covered | All three always hold values; the form cannot be partially filled |
+| long-text | ✅ covered | Readouts max out at "120 sec" at Display 32, centred, no wrap risk. Screen readers get the `semanticFormatterCallback` strings, not the bare numeral |
+
+### E4 — Auto-replay toggle `r` (form + interactive-control + list-collection)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| empty | ✅ covered | Boolean with a default of ON — always has a value |
+| loading | ✅ covered | Local state only |
+| error | ✅ covered | No failure path |
+| populated | ✅ covered | `SwitchListTile`, coral active track, 64px row, with the Body helper line beneath |
+| partial | ✅ covered | A boolean has no partial state |
+| overflow | ✅ covered | Inside the Setup scroll view; label and helper wrap and the tile grows |
+| zero-one-many | ✅ covered | Exactly one toggle — no collection semantics |
+| long-text | ✅ covered | Fixed copy; the title wraps inside the tile at large text scale |
+
+### E5 — Start session button, pinned footer (form + interactive-control)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| empty | ✅ covered | The disabled state **is** the nothing-selected state: peach fill, full-opacity brown label, plus "Pick at least one topic to start." above it (SETUP-07 / D-19) |
+| loading | ✅ covered | Start pushes the practice screen synchronously — there is no in-flight submit state in Phase 2 (the orphan sweep runs at app start, not on Start) |
+| error | ✅ covered | No submit failure path. Recorder failures surface later, on the practice screen, through the Phase 1 error banner |
+| partial | ✅ covered | Only one field gates Start; the other four always hold values, so "partially filled" collapses into the disabled state above |
+| long-text | 🧪 backstop | The footer is the one region that does **not** scroll. Verify that at the largest OS text-scale setting the "START SESSION" label plus the blocked-helper line fit without a `RenderFlex` overflow, and that the footer grows rather than clipping |
+
+### E6 — Session app bar (nav + interactive-control + static-content)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| loading | ✅ covered | `k` and `N` are known local state before the bar first builds — the title never renders a placeholder |
+| error | ✅ covered | In the `error` phase the bar is unchanged (Pause disabled, Stop enabled); the failure is reported by the banner below it, never by the chrome |
+| overflow | ✅ covered | Title uses `TextOverflow.ellipsis` — a truncated title is acceptable, an overflow is not |
+| long-text | ✅ covered | Worst case is "Question 100 of 100"; ellipsis absorbs max text scale. Actions are 48px icon-only with tooltips, so they never grow with text |
+
+### E7 — Three-second get-ready countdown, LOOP-01 / LOOP-07 (static-content + media)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| empty | ✅ covered | A bounded 3 → 1 sequence that always has a digit, plus a caption that always renders |
+| loading | ✅ covered | This surface **is** the interstitial — nothing loads behind it; the next question is already resolved before it starts |
+| error | ✅ covered | The countdown has no failure mode of its own; a recorder failure at its end routes to the `error` phase and its banner |
+| populated | ✅ covered | 128px coral numeral in a fixed 160px box in the focus slot, mascot in the anchor slot, caption in the control slot, question card hidden (D-22) |
+| overflow | ✅ covered | `FittedBox(fit: BoxFit.scaleDown)` inside the fixed 160px box — the established Phase 1 STOP-label containment pattern |
+| long-text | ✅ covered | A single-digit glyph plus two fixed captions ("Get ready…" / "Next question…") |
+
+### E8 — Per-question `t` countdown, LOOP-02 (static-content + media)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| empty | ✅ covered | `t` has a floor of 3 s (D-16) so the ring always has a value, and the question card always has text |
+| loading | ✅ covered | The question is resolved before the countdown begins — the card is never blank |
+| error | ✅ covered | Same as E7: failures route to the `error` phase and its banner |
+| populated | ✅ covered | 96px ring, coral elapsed arc on a peach track, remaining seconds at Heading 24 inside; question card visible and dominant (D-22) |
+| overflow | 🧪 backstop | Verify the two-digit worst case ("30") still fits inside the fixed 96px ring at the largest OS text-scale setting, scaling down rather than clipping |
+| long-text | 🧪 backstop | Verify the longest of the ~20 placeholder prompts (D-23) renders un-clipped in the peach card at max text scale, in the `reading`, `recording` and `paused` states |
+
+### E9 — Recording control: STOP circle + `d` readout (interactive-control + static-content)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| loading | ✅ covered | The arming window is its own phase with its own caption ("Getting ready…", D-20) — this control never renders while the microphone is still cold |
+| error | ✅ covered | A recorder or save failure routes to the `error` phase, where the banner's Retry is the affordance and this control is not rendered |
+| overflow | ✅ covered | The STOP label is `FittedBox`-scaled inside the fixed 96px circle; the readout sits below it in normal flow and wraps |
+| long-text | ✅ covered | The readout maxes at "2:00 left" (`d` ≤ 120 s), Body 16/400 brown — deliberately not coral, not animated, not a `liveRegion` |
+
+### E10 — Paused state (static-content + interactive-control)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| loading | ✅ covered | Pause is synchronous local state — the banner appears in the same frame as the tap |
+| error | 🧪 backstop | `record.pause()` and `AudioPlaybackBackend.pause()` can fail on-device. Verify a **failed** pause surfaces the Phase 1 error banner and does **not** leave a UI claiming "Paused — nothing is being recorded." while the microphone is still live. This is the phase's honesty contract at its most brittle point (D-24) |
+| overflow | ✅ covered | Banner text sits in an `Expanded` and wraps; the frozen focus slot keeps its fixed height, so nothing jumps |
+| long-text | ✅ covered | Both banner variants are fixed copy at Label 18/600 and wrap rather than truncate |
+
+### E11 — Stop confirmation dialog, CTRL-03 (static-content + interactive-control + list-collection)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| empty | ⚠ unresolved | **The Copywriting Contract specifies dialog bodies for N ≥ 2 and N = 1 only — there is no N = 0 body string, yet Stop is enabled in every phase including before the first answer is committed.** Planner must treat as an assumption and resolve it: proposed copy — "Nothing has been recorded yet." — keeping the title, both actions and the D-26 behaviour (confirm ⇒ pop straight to Setup, no completion state) unchanged |
+| loading | ✅ covered | The dialog opens on local state; the session auto-pauses behind it (D-25), so nothing is in flight while it is open |
+| error | ✅ covered | The dialog itself cannot fail. A pause failure raised while it is open is covered by E10/error |
+| populated | ✅ covered | `AlertDialog` on ivory, 24px radius, Heading title, Body content; "Keep going" is the dominant coral `FilledButton`, "End session" a warm-red `TextButton` at min 64×48 |
+| partial | ✅ covered | Exactly two actions plus the barrier, all always present; there is no partially-available action set |
+| overflow | ✅ covered | Body text wraps inside the dialog; the dialog scrolls internally at large text scale rather than pushing its actions off-screen |
+| zero-one-many | ⚠ unresolved | Same gap as E11/empty — the N = 0 branch has no locked copy. N = 1 and N ≥ 2 are fully specified and distinct |
+| long-text | ✅ covered | The only variable is `{N}` (≤ 3 digits); all other copy is fixed |
+
+### E12 — Session completion state, D-27 (static-content + interactive-control + list-collection)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| empty | ✅ covered | N = 0 is unreachable here by construction — a session stopped before its first answer pops straight to Setup and no session row was ever written (D-26/D-27) |
+| loading | ✅ covered | `N` is the count of answers already committed; it is known synchronously when the state is entered |
+| error | ✅ covered | Every answer was durably committed as it was captured (PERSIST-01), so nothing can fail at completion time |
+| populated | ✅ covered | "Nice work!" at Display + the sub-line at Body, question card hidden; "View this session" (coral, full width, 64px) above "Back to setup" (`TextButton`, brown, min 64×48). App bar title becomes "Session complete" and both session actions are hidden |
+| partial | ✅ covered | A session stopped early reaches exactly the same state as a completed one — the count is simply lower, and the copy does not distinguish them (ending early is not framed as a failure) |
+| overflow | ✅ covered | The completion content occupies the same three slots at the same fixed heights; text wraps |
+| zero-one-many | ✅ covered | "1 answer recorded." and "{N} answers recorded." are separately locked; N = 0 is unreachable per D-26/D-27 |
+| long-text | ✅ covered | Only `{N}` varies (≤ 3 digits); the two button labels are fixed |
+
+### E13 — Recording/save error banner, reused from Phase 1 (static-content + interactive-control)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| loading | ✅ covered | The banner renders from local phase state, in the same frame the failure is recorded |
+| error | ✅ covered | This surface **is** the error treatment: one fixed string (`kRecordingErrorMessage`, unchanged) plus Retry, docked above the content so the screen is never a blank dead end. Phase 2 adds no new failure string |
+| overflow | ✅ covered | The message sits in an `Expanded` and wraps; Retry keeps its 64×48 floor |
+| long-text | ✅ covered | The string is a compile-time constant — it cannot grow |
+
+### E14 — Session detail list, existing screen (list-collection + media)
+
+| Category | Status | Resolution |
+|----------|--------|------------|
+| empty | ✅ covered | Unreachable by construction — a session row exists only once its first answer has been committed (D-26), so a detail view with zero rows cannot be opened |
+| loading | ✅ covered | Unchanged from Phase 1 — the screen's existing load treatment still applies |
+| error | ✅ covered | Unchanged from Phase 1 — the existing read-failure state with "Try again" |
+| populated | 🧪 backstop | Phase 2 produces the first genuinely multi-answer sessions. Verify a completed 10-question session renders all 10 rows in insertion order, each with its own recording |
+| partial | ✅ covered | Every row has both question text and an audio path by construction — they are written in one transaction (D-08), and the foreign key makes an orphan row impossible at the DB layer |
+| overflow | ✅ covered | Existing `ListView` scrolls; unchanged by Phase 2 |
+| zero-one-many | 🧪 backstop | Verify both shapes read correctly: the 1-answer session (Phase 1's shape, still produced by an early stop) and a many-answer session, **including repeated question text** where the bank cycled (D-23) — repeats are expected and deliberately unlabelled |
+
+### Carried forward — interaction race (not shape-rooted)
+
+| Item | Status | Resolution |
+|------|--------|------------|
+| `d` auto-stop landing in the same frame as a Pause tap | ⚠ unresolved | No visual treatment is specified for the exact frame where the `d` deadline fires simultaneously with a Pause tap. Planner assumption: **the auto-stop wins**, the loop proceeds through `saving` → `replaying`, and the pause request applies at the next pausable phase rather than being dropped. This mirrors Phase 1's auto-stop-vs-manual-Stop race and its "first signal wins, second is a no-op" principle. Should become an explicit test case, not an inherited convention |
 
 ---
 
@@ -524,11 +673,29 @@ Applicable state considerations resolved: 9 covered, 4 backstop, 1 unresolved
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
+- [x] Dimension 1 Copywriting: PASS
+- [x] Dimension 2 Visuals: PASS
+- [x] Dimension 3 Color: PASS
+- [x] Dimension 4 Typography: **FLAG** (non-blocking)
+- [x] Dimension 5 Spacing: PASS
+- [x] Dimension 6 Registry Safety: PASS
 
-**Approval:** pending
+**Approval:** APPROVED (2026-08-08)
+
+**Non-blocking recommendations carried to the planner:**
+
+1. **Typography FLAG** — the 128px countdown glyph is a fifth *rendered* size. It stays within contract
+   because it is derived (`displayLarge!.copyWith(fontSize: 128)`), used by exactly one element, and
+   clamped by `FittedBox(scaleDown)` inside a fixed 160px box. Make the constraint *enforceable* rather
+   than documentary: define it as a single named constant (e.g. `kCountdownGlyphSize`) at one call site
+   so a second use is visible in review.
+2. **Auto-stop vs. Pause race** — write the stated assumption (auto-stop wins; the pause request applies
+   at the next pausable phase) into the plan as an explicit test case, not an inherited convention.
+   Tracked as ⚠ unresolved in `## UI Considerations`.
+3. **`d` slider granularity** — if the sanctioned 5-second-division fallback is taken, confirm the
+   `{n} sec` readout format and the D-16 default of 60 both still hold (they do for a 10…120 step-5
+   range, but verify rather than assume).
+4. **N = 0 Stop-dialog body** — surfaced by the UI-consideration probe after checker sign-off and
+   tracked as ⚠ unresolved in `## UI Considerations` (E11). The Copywriting Contract locks bodies for
+   N ≥ 2 and N = 1 only, but Stop is reachable before the first answer is committed. The planner must
+   resolve it; proposed copy is recorded in that row.
