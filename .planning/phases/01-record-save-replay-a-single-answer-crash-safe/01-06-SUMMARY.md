@@ -256,6 +256,37 @@ None - no external service configuration required.
 - **Two review findings remain deliberately open**, per the plan's `<review_disposition>`: WR-12 (`toMap()` production-dead) folds naturally into Phase 2's multi-row inserts, and IN-01 (timestamps stored as local time with no offset) needs a plan that can carry a data migration — history ordering uses `sessions.id DESC`, not the timestamp, so there is no functional impact today.
 - **`.planning/STATE.md` and `.planning/ROADMAP.md` were deliberately NOT modified** — this plan ran in a worktree and the orchestrator owns those writes after the wave merges.
 
+## Verification Results
+
+- `flutter analyze` → **No issues found!** (exit 0) ✅
+- `flutter test` (whole suite) → **All tests passed**, 78 tests (exit 0) ✅
+- `flutter test test/screens/history_screen_test.dart test/db/database_helper_test.dart` → 20 passed ✅
+- `flutter test test/screens/session_detail_screen_test.dart` → 9 passed ✅
+- `grep -c 'snapshot.hasError'` → 1 in `history_screen.dart`, 1 in `session_detail_screen.dart` ✅
+- `grep -c 'session.id!' lib/screens/session_detail_screen.dart` → 0 ✅
+- `grep -c '_dbFuture' lib/db/database_helper.dart` → 4 (≥3 required) ✅
+- `grep -c 'Gaps Found' .planning/REQUIREMENTS.md` → 0 ✅
+- `git diff --name-only 28f50c9 HEAD` → exactly the 8 declared files; `STATE.md` and `ROADMAP.md` absent ✅
+- `git diff --diff-filter=D --name-only 28f50c9 HEAD` → empty; no file deleted ✅
+- Negative control: the RED run failed on the resolution count (2, expected 1) while `identical()` already passed — the memoization test observes the real defect ✅
+
+## Self-Check: PASSED
+
+**Files claimed created/modified — all verified present:**
+
+- `test/screens/history_screen_test.dart` — FOUND
+- `test/screens/session_detail_screen_test.dart` — FOUND
+- `lib/db/database_helper.dart` — FOUND (modified)
+- `lib/screens/history_screen.dart` — FOUND (modified)
+- `lib/screens/session_detail_screen.dart` — FOUND (modified)
+- `test/db/database_helper_test.dart` — FOUND (modified)
+- `.planning/REQUIREMENTS.md` — FOUND (modified)
+- `.planning/phases/01-record-save-replay-a-single-answer-crash-safe/01-06-SUMMARY.md` — FOUND
+
+**Commits claimed — all present in `git log`:** `79db948`, `de3ee57`, `f8788b0`, `9c6d591`, `e06dda4`, `b0f16e2`
+
+Working tree clean; no deletions in any commit.
+
 ---
 *Phase: 01-record-save-replay-a-single-answer-crash-safe*
 *Completed: 2026-08-08*
