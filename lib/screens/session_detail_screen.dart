@@ -51,10 +51,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
           'Session — ${formatSessionTimestamp(widget.session.createdAt)}',
+          style: theme.textTheme.headlineSmall,
         ),
       ),
       body: FutureBuilder<List<QuestionAnswer>>(
@@ -65,15 +68,46 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           }
           final answers = snapshot.data ?? const <QuestionAnswer>[];
           return ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             itemCount: answers.length,
             itemBuilder: (context, index) {
               final answer = answers[index];
-              return ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 64),
-                child: ListTile(
-                  title: Text(answer.questionText),
-                  trailing: const Icon(Icons.play_circle_fill),
-                  onTap: () => _play(answer),
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 64),
+                  child: Material(
+                    color: theme.colorScheme.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () => _play(answer),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                answer.questionText,
+                                // Detail rows sit at list scale, not the live
+                                // Practice-screen prompt scale.
+                                style: theme.textTheme.bodyLarge,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Icon(
+                              Icons.play_circle_fill,
+                              size: 32,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               );
             },

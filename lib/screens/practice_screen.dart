@@ -4,6 +4,7 @@ import '../db/database_helper.dart';
 import '../services/audio_player_service.dart';
 import '../services/recording_service.dart';
 import '../state/practice_state.dart';
+import '../widgets/mascot.dart';
 import 'history_screen.dart';
 
 /// The single practice screen: a question appears and recording starts the
@@ -49,6 +50,8 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('EnglishReflex'),
@@ -60,32 +63,115 @@ class _PracticeScreenState extends State<PracticeScreen> {
           ),
         ],
       ),
-      body: ListenableBuilder(
-        listenable: _state,
-        builder: (context, _) {
-          return Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  _state.currentQuestion,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.headlineMedium,
-                ),
-                const SizedBox(height: 48),
-                if (_state.phase == PracticePhase.recording)
-                  FilledButton.icon(
-                    onPressed: _state.stopRecording,
-                    icon: const Icon(Icons.stop_rounded),
-                    label: const Text('STOP'),
+      body: SafeArea(
+        child: ListenableBuilder(
+          listenable: _state,
+          builder: (context, _) {
+            // Centred normally, scrollable rather than clipped once the OS
+            // text-scale setting grows the content past the viewport (UI-01).
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24, // lg — screen edge padding
+                    vertical: 32, // xl
                   ),
-                if (_state.phase == PracticePhase.replaying)
-                  const Text('Playing your answer…'),
-              ],
-            ),
-          );
-        },
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight - 64,
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Mascot(
+                          isRecording:
+                              _state.phase == PracticePhase.recording,
+                          isError: _state.phase == PracticePhase.error,
+                        ),
+                        const SizedBox(height: 32), // xl
+                        _QuestionCard(question: _state.currentQuestion),
+                        const SizedBox(height: 48), // 2xl
+                        if (_state.phase == PracticePhase.recording)
+                          _StopButton(onPressed: _state.stopRecording),
+                        if (_state.phase == PracticePhase.replaying)
+                          Text(
+                            'Playing your answer…',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodyLarge,
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// The prompt, on the peach secondary surface with generously rounded corners.
+class _QuestionCard extends StatelessWidget {
+  const _QuestionCard({required this.question});
+
+  final String question;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24), // lg
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Text(
+        question,
+        textAlign: TextAlign.center,
+        style: theme.textTheme.displayLarge,
+      ),
+    );
+  }
+}
+
+/// The 96px circular Stop target — the single most important tap target on the
+/// screen, deliberately far above the 44px minimum (UI-SPEC spacing exception).
+class _StopButton extends StatelessWidget {
+  const _StopButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return SizedBox(
+      width: 96,
+      height: 96,
+      child: FilledButton(
+        onPressed: onPressed,
+        style: FilledButton.styleFrom(
+          backgroundColor: theme.colorScheme.primary,
+          foregroundColor: theme.colorScheme.onPrimary,
+          shape: const CircleBorder(),
+          padding: EdgeInsets.zero,
+        ),
+        // Scales the label down rather than overflowing the fixed-size target
+        // at the largest OS text-scale setting.
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.stop_rounded, size: 28),
+              Text('STOP', style: theme.textTheme.labelLarge),
+            ],
+          ),
+        ),
       ),
     );
   }
