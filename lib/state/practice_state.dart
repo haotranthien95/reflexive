@@ -330,7 +330,7 @@ class PracticeState extends ChangeNotifier {
   /// unguarded await here turns both into dead ends.
   ///
   /// Disposal is handled on the same principle. The `_disposed` checks sit only
-  /// AFTER the `insertAnsweredSession` commit, never between the recorder
+  /// AFTER the `appendAnswer` commit, never between the recorder
   /// finalizing the file and that commit: once the audio exists on disk the
   /// save is unconditional, and only the notification, the replay and the
   /// re-arm depend on the screen still being alive.
@@ -372,7 +372,8 @@ class PracticeState extends ChangeNotifier {
     _currentRelativePath = null;
 
     try {
-      await databaseHelper.insertAnsweredSession(
+      sessionId = await databaseHelper.appendAnswer(
+        sessionId: sessionId,
         questionText: currentQuestion,
         audioRelativePath: relativePath,
       );

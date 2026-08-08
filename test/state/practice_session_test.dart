@@ -81,13 +81,22 @@ class InMemoryDatabaseHelper extends DatabaseHelper {
   final List<Session> sessions = <Session>[];
   final List<QuestionAnswer> answers = <QuestionAnswer>[];
 
+  /// Overrides [DatabaseHelper.appendAnswer] — the single transaction-owning
+  /// writer the loop actually calls (D-26) — so this double models the same
+  /// lazy-session-creation rule the real one enforces.
   @override
-  Future<int> insertAnsweredSession({
+  Future<int> appendAnswer({
+    int? sessionId,
     required String questionText,
     required String audioRelativePath,
   }) async {
-    final id = sessions.length + 1;
-    sessions.add(Session(id: id, createdAt: DateTime.now()));
+    final int id;
+    if (sessionId == null) {
+      id = sessions.length + 1;
+      sessions.add(Session(id: id, createdAt: DateTime.now()));
+    } else {
+      id = sessionId;
+    }
     answers.add(
       QuestionAnswer(
         id: answers.length + 1,

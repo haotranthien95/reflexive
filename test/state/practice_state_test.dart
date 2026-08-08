@@ -96,9 +96,15 @@ class FakeAudioPlayerService extends AudioPlayerService {
 
 /// A [DatabaseHelper] whose crash-safety-critical write always fails, standing
 /// in for a full disk / corrupt database at the exact moment of the save.
+///
+/// It overrides [DatabaseHelper.appendAnswer], not `insertAnsweredSession`:
+/// `appendAnswer` is the single transaction-owning writer the loop actually
+/// calls (D-26), and overriding the delegation instead would leave the
+/// save-failure regression below passing while exercising nothing.
 class FailingDatabaseHelper extends DatabaseHelper {
   @override
-  Future<int> insertAnsweredSession({
+  Future<int> appendAnswer({
+    int? sessionId,
     required String questionText,
     required String audioRelativePath,
   }) async {
@@ -253,23 +259,26 @@ void main() {
     expect(await databaseHelper.listSessions(), isEmpty);
   });
 
-  test('two recordings in a row produce two separate sessions', () async {
+  test('two answers in a row append to ONE session', () async {
+    // THE IDENTITY PROMOTION (D-26). This case used to expect TWO sessions,
+    // which encoded Phase 1's implicit "a session IS one answer". A session is
+    // now a container of N answers, and per-answer session creation is demoted
+    // to the `sessionId == null` special case that opens the first one. A future
+    // change that reintroduces per-answer session creation must turn this red.
     await state.startNewQuestion();
     await state.stopRecording();
     // EXPLICIT second recording. The removed replay-and-re-arm tail used to
     // leave one running; without it a bare second `stopRecording()` hits the
-    // no-op guard pinned by the test above and only one session is ever
-    // written.
+    // no-op guard pinned by the test above and nothing at all is appended.
     await state.startNewQuestion();
     await state.stopRecording();
 
     final sessions = await databaseHelper.listSessions();
-    expect(sessions, hasLength(2));
-    expect(sessions.first.id, isNot(sessions.last.id));
-    for (final session in sessions) {
-      expect(await databaseHelper.listAnswersForSession(session.id!),
-          hasLength(1));
-    }
+    expect(sessions, hasLength(1));
+    final answers =
+        await databaseHelper.listAnswersForSession(sessions.single.id!);
+    expect(answers, hasLength(2));
+    expect(answers.first.id, lessThan(answers.last.id!));
   });
 
   test('two recordings started in the same millisecond do not collide',
