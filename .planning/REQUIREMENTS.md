@@ -63,8 +63,8 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Visual Design
 
-- [ ] **UI-01**: Interface uses large, easily readable font sizes throughout (read-at-arm's-length, then speak)
-- [ ] **UI-02**: Visual style is simple, colorful, and friendly/cartoon-like — not corporate/minimal-grey
+- [x] **UI-01**: Interface uses large, easily readable font sizes throughout (read-at-arm's-length, then speak)
+- [x] **UI-02**: Visual style is simple, colorful, and friendly/cartoon-like — not corporate/minimal-grey
 - [ ] **UI-03**: The app has exactly 3 core screens (Setup, Practice Session, History) with no extraneous navigation
 
 ## v2 Requirements
@@ -109,22 +109,22 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SETUP-07 | Phase 2 | Pending |
 | LOOP-01 | Phase 2 | Pending |
 | LOOP-02 | Phase 2 | Pending |
-| LOOP-03 | Phase 1 | Gaps Found |
-| LOOP-04 | Phase 1 | Gaps Found |
-| LOOP-05 | Phase 1 | Gaps Found |
-| LOOP-06 | Phase 1 | Gaps Found |
+| LOOP-03 | Phase 1 | Complete (device UAT pending) |
+| LOOP-04 | Phase 1 | Complete |
+| LOOP-05 | Phase 1 | Complete |
+| LOOP-06 | Phase 1 | Complete (device UAT pending) |
 | LOOP-07 | Phase 2 | Pending |
 | LOOP-08 | Phase 2 | Pending |
 | CTRL-01 | Phase 2 | Pending |
 | CTRL-02 | Phase 2 | Pending |
 | CTRL-03 | Phase 2 | Pending |
 | CTRL-04 | Phase 2 | Pending |
-| HIST-01 | Phase 1 | Gaps Found |
-| HIST-02 | Phase 1 | Gaps Found |
-| HIST-03 | Phase 1 | Gaps Found |
-| HIST-04 | Phase 1 | Gaps Found |
-| PERSIST-01 | Phase 1 | Gaps Found |
-| PERSIST-02 | Phase 1 | Gaps Found |
+| HIST-01 | Phase 1 | Complete |
+| HIST-02 | Phase 1 | Complete |
+| HIST-03 | Phase 1 | Complete (device UAT pending) |
+| HIST-04 | Phase 1 | Complete (device UAT pending) |
+| PERSIST-01 | Phase 1 | Complete |
+| PERSIST-02 | Phase 1 | Complete (device UAT pending) |
 | BANK-01 | Phase 3 | Pending |
 | BANK-02 | Phase 3 | Pending |
 | BANK-03 | Phase 3 | Pending |
@@ -133,8 +133,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | IMPORT-03 | Phase 4 | Pending |
 | IMPORT-04 | Phase 4 | Pending |
 | IMPORT-05 | Phase 4 | Pending |
-| UI-01 | Phase 1 | Pending |
-| UI-02 | Phase 1 | Pending |
+| UI-01 | Phase 1 | Complete (device UAT pending) |
+| UI-02 | Phase 1 | Complete (device UAT pending) |
 | UI-03 | Phase 4 | Pending |
 
 **Coverage:**
@@ -145,4 +145,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-08-07*
-*Last updated: 2026-08-07 after roadmap creation (36/36 requirements mapped to 4 phases)*
+*Last updated: 2026-08-08 — Phase 1 statuses reconciled after gap closure (plans 01-04 through 01-06). `Complete` means proven by automated tests; `Complete (device UAT pending)` means the implementation is done but the remaining evidence is an on-device check that has not been performed.*

@@ -36,22 +36,41 @@ class DatabaseHelper {
   static const String kSessionsTable = 'sessions';
   static const String kQuestionAnswersTable = 'question_answers';
 
-  Database? _db;
+  /// The in-flight-or-resolved open, memoized as a FUTURE rather than as the
+  /// resolved [Database].
+  ///
+  /// The previous getter memoized `Database? _db` and awaited two async calls
+  /// (`appDocumentsDir()` then `openDatabase()`) *between* its null check and
+  /// its assignment. Dart's single-threaded event loop does not make that
+  /// window safe: any other caller reaching the getter while the first open is
+  /// still in flight sees `_db == null` and starts a second open. Both callers
+  /// then hold a connection and only the last assignment is ever closed — the
+  /// first handle leaks for the whole process lifetime.
+  ///
+  /// That window is genuinely reachable in this app: `PracticeScreen`'s
+  /// launch-time orphan sweep reads the database, and the user can tap through
+  /// to History before the sweep's open has resolved. A leaked/duplicated
+  /// connection is one of the concrete ways a later read can fail — which is
+  /// exactly what `HistoryScreen`'s error state now reports honestly instead of
+  /// rendering as "No recordings yet".
+  ///
+  /// Memoizing the future closes the window: `??=` assigns before the first
+  /// `await` inside [_open] can yield, so every subsequent caller awaits the
+  /// same open.
+  Future<Database>? _dbFuture;
 
-  /// Opens (and on first run creates) the database lazily.
-  Future<Database> get database async {
-    final existing = _db;
-    if (existing != null) return existing;
+  /// Opens (and on first run creates) the database lazily, exactly once.
+  Future<Database> get database => _dbFuture ??= _open();
+
+  Future<Database> _open() async {
     final docsDir = await appDocumentsDir();
     final path = p.join(docsDir.path, kDatabaseFileName);
-    final db = await openDatabase(
+    return openDatabase(
       path,
       version: 1,
       onConfigure: _onConfigure,
       onCreate: _onCreate,
     );
-    _db = db;
-    return db;
   }
 
   /// Runs on EVERY open, before any migration or query.
@@ -151,8 +170,16 @@ CREATE TABLE $kQuestionAnswersTable (
     return rows.map((row) => row['audio_path']! as String).toSet();
   }
 
+  /// Closes the memoized connection, if one was ever opened.
+  ///
+  /// The memo is cleared BEFORE the close is awaited, so a caller that reaches
+  /// [database] during the close gets a fresh open rather than a handle that is
+  /// about to become invalid.
   Future<void> close() async {
-    await _db?.close();
-    _db = null;
+    final pending = _dbFuture;
+    _dbFuture = null;
+    if (pending == null) return;
+    final db = await pending;
+    await db.close();
   }
 }
