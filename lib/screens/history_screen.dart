@@ -30,8 +30,15 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Exercise History')),
+      appBar: AppBar(
+        title: Text(
+          'Exercise History',
+          style: theme.textTheme.headlineSmall,
+        ),
+      ),
       body: FutureBuilder<List<Session>>(
         future: _sessionsFuture,
         builder: (context, snapshot) {
@@ -43,19 +50,52 @@ class _HistoryScreenState extends State<HistoryScreen> {
             return const _EmptyHistory();
           }
           return ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             itemCount: sessions.length,
             itemBuilder: (context, index) {
               final session = sessions[index];
-              return ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 64),
-                child: ListTile(
-                  title: Text(formatSessionTimestamp(session.createdAt)),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => SessionDetailScreen(
-                        session: session,
-                        databaseHelper: widget.databaseHelper,
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: ConstrainedBox(
+                  // Touch-target floor, not part of the 4px content scale.
+                  constraints: const BoxConstraints(minHeight: 64),
+                  child: Material(
+                    color: theme.colorScheme.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => SessionDetailScreen(
+                            session: session,
+                            databaseHelper: widget.databaseHelper,
+                          ),
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                formatSessionTimestamp(session.createdAt),
+                                style: theme.textTheme.bodyLarge,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            // Accent marks the tappable affordance. Tapping a
+                            // session opens its detail rather than playing, so
+                            // this stays a chevron; the play icon lives on the
+                            // detail rows that actually play audio.
+                            Icon(
+                              Icons.chevron_right,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -74,8 +114,10 @@ class _EmptyHistory extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Center(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -83,12 +125,13 @@ class _EmptyHistory extends StatelessWidget {
             Text(
               'No recordings yet',
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.headlineSmall,
+              style: theme.textTheme.headlineSmall,
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               "Finish your first answer and it'll show up here.",
               textAlign: TextAlign.center,
+              style: theme.textTheme.bodyLarge,
             ),
           ],
         ),
