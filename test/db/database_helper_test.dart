@@ -193,6 +193,37 @@ void main() {
       expect(await helper.listSessions(), isEmpty);
     });
 
+    test('a FAILED open is not cached — the next caller re-attempts', () async {
+      // REGRESSION GUARD (CR-02). `_dbFuture ??= _open()` memoized the REJECTED
+      // future permanently, so every later call replayed the cached error
+      // without re-attempting anything. Two consequences, both of which defeat
+      // work done in this same phase: the "Try again" buttons 01-06 added
+      // become a permanent no-op for the likeliest cause of the error they
+      // retry, and a transient launch-time failure makes every subsequent
+      // insertAnsweredSession fail for the process lifetime — while the user is
+      // told to check a microphone permission.
+      var attempts = 0;
+      documentsDirProvider = () async {
+        attempts++;
+        if (attempts == 1) {
+          throw StateError('transient: cannot resolve docs dir');
+        }
+        return tempDir;
+      };
+      final retryingHelper = DatabaseHelper();
+      addTearDown(retryingHelper.close);
+
+      await expectLater(
+        retryingHelper.listSessions(),
+        throwsA(isA<StateError>()),
+      );
+
+      // The retry affordance's whole contract: the next call really tries again.
+      expect(await retryingHelper.listSessions(), isEmpty);
+      expect(attempts, 2,
+          reason: 'the second read never re-attempted the open');
+    });
+
     test('close() before the database was ever opened is a no-op', () async {
       await helper.close();
       expect(await helper.listSessions(), isEmpty);

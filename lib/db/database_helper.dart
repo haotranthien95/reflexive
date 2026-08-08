@@ -54,13 +54,42 @@ class DatabaseHelper {
   /// exactly what `HistoryScreen`'s error state now reports honestly instead of
   /// rendering as "No recordings yet".
   ///
-  /// Memoizing the future closes the window: `??=` assigns before the first
-  /// `await` inside [_open] can yield, so every subsequent caller awaits the
-  /// same open.
+  /// Memoizing the future closes the window: the assignment happens before the
+  /// first `await` inside [_open] can yield, so every subsequent caller awaits
+  /// the same open.
+  ///
+  /// Only a SUCCESSFUL open stays memoized — see [database].
   Future<Database>? _dbFuture;
 
-  /// Opens (and on first run creates) the database lazily, exactly once.
-  Future<Database> get database => _dbFuture ??= _open();
+  /// Opens (and on first run creates) the database lazily, exactly once —
+  /// unless the open FAILS, in which case the memo is dropped so the next
+  /// caller re-attempts.
+  ///
+  /// Caching a rejected future would be a permanent-failure latch: nothing
+  /// outside tests calls [close] (the only other code that clears the memo), so
+  /// a single transient failure — `appDocumentsDir()` failing, a locked or
+  /// corrupt file, disk pressure — would make every later read and every later
+  /// [insertAnsweredSession] fail for the whole process lifetime. That would
+  /// also make the "Try again" affordances in `HistoryScreen` and
+  /// `SessionDetailScreen` permanent no-ops for the most likely cause of the
+  /// very error state they retry.
+  ///
+  /// The double-open protection is fully preserved: [_open] is invoked and
+  /// [_dbFuture] assigned synchronously here, with no `await` in between, so
+  /// two overlapping first accesses still share one open. The memo is cleared
+  /// only from the error callback, which cannot run before that assignment —
+  /// and only when it is still THIS attempt, so a [close] that raced the
+  /// failure keeps its own fresh memo.
+  Future<Database> get database {
+    final Future<Database>? existing = _dbFuture;
+    if (existing != null) return existing;
+    late final Future<Database> attempt;
+    attempt = _open().onError<Object>((error, stackTrace) {
+      if (identical(_dbFuture, attempt)) _dbFuture = null;
+      Error.throwWithStackTrace(error, stackTrace);
+    });
+    return _dbFuture = attempt;
+  }
 
   Future<Database> _open() async {
     final docsDir = await appDocumentsDir();
