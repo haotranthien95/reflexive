@@ -1,9 +1,40 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import 'screens/practice_screen.dart';
 
+/// Makes the bundled `assets/fonts/Baloo2-SemiBold.ttf` the ONLY way Baloo 2
+/// can load, and registers its licence.
+///
+/// `google_fonts` otherwise downloads the family from `fonts.gstatic.com` on
+/// first launch. That is wrong here twice over: this app is documented as fully
+/// on-device (a fetch would leak an install/launch signal to a third-party CDN),
+/// and the release Android manifest deliberately requests no network permission
+/// — so in a RELEASE build the fetch cannot succeed and the app silently falls
+/// back to the default Material font. The typography locked by D-15 then simply
+/// does not ship, and nobody notices, because debug builds *do* have network
+/// access and look correct.
+///
+/// Setting `allowRuntimeFetching = false` converts that silent degradation into
+/// a loud failure: with no network path left, a missing or misnamed asset makes
+/// `loadFontIfNecessary` throw instead of falling back. **That loud failure is
+/// the point** — it is what `test/theme/typography_test.dart` asserts on, so a
+/// regression that drops the asset from `pubspec.yaml` or renames the file
+/// becomes a red test rather than an invisible change in a shipped build.
+void configureFonts() {
+  GoogleFonts.config.allowRuntimeFetching = false;
+  LicenseRegistry.addLicense(() async* {
+    final String license = await rootBundle.loadString('assets/fonts/OFL.txt');
+    yield LicenseEntryWithLineBreaks(<String>['google_fonts'], license);
+  });
+}
+
 void main() {
+  // Required before `configureFonts()` so `rootBundle` is usable.
+  WidgetsFlutterBinding.ensureInitialized();
+  configureFonts();
   runApp(const EnglishReflexApp());
 }
 
