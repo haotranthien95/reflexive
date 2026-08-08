@@ -1,6 +1,8 @@
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
+import '../models/question_answer.dart';
+import '../models/session.dart';
 import '../utils/audio_paths.dart';
 
 /// Local SQLite access for practice sessions and their answered questions.
@@ -84,6 +86,26 @@ CREATE TABLE $kQuestionAnswersTable (
       });
       return sessionId;
     });
+  }
+
+  /// Every saved session, most recent first (HIST-01).
+  Future<List<Session>> listSessions() async {
+    final db = await database;
+    final rows = await db.query(kSessionsTable, orderBy: 'id DESC');
+    return rows.map(Session.fromMap).toList();
+  }
+
+  /// The answered questions belonging to [sessionId], in insertion order
+  /// (HIST-02). Scoped strictly to that session via a parameterised `where`.
+  Future<List<QuestionAnswer>> listAnswersForSession(int sessionId) async {
+    final db = await database;
+    final rows = await db.query(
+      kQuestionAnswersTable,
+      where: 'session_id = ?',
+      whereArgs: [sessionId],
+      orderBy: 'id ASC',
+    );
+    return rows.map(QuestionAnswer.fromMap).toList();
   }
 
   Future<void> close() async {
