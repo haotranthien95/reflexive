@@ -4,6 +4,7 @@ import '../db/database_helper.dart';
 import '../services/audio_player_service.dart';
 import '../services/recording_service.dart';
 import '../state/practice_state.dart';
+import '../widgets/mascot.dart';
 import 'history_screen.dart';
 
 /// The single practice screen: a question appears and recording starts the
@@ -82,6 +83,12 @@ class _PracticeScreenState extends State<PracticeScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
+                        Mascot(
+                          isRecording:
+                              _state.phase == PracticePhase.recording,
+                          isError: _state.phase == PracticePhase.error,
+                        ),
+                        const SizedBox(height: 32), // xl
                         _QuestionCard(question: _state.currentQuestion),
                         const SizedBox(height: 48), // 2xl
                         if (_state.phase == PracticePhase.recording)
