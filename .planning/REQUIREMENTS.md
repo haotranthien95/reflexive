@@ -21,10 +21,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [ ] **LOOP-01**: Starting a session shows a 3-second countdown before the first question appears
 - [ ] **LOOP-02**: Each question displays with a live `t`-second countdown before recording begins
-- [x] **LOOP-03**: Recording starts automatically the instant the pre-record countdown reaches 0
-- [x] **LOOP-04**: Recording stops automatically after `d` seconds
-- [x] **LOOP-05**: User can manually stop the current recording early via a large, always-visible stop button
-- [x] **LOOP-06**: If `r` is true, the just-recorded answer plays back automatically once recording stops
+- [ ] **LOOP-03**: Recording starts automatically the instant the pre-record countdown reaches 0
+- [ ] **LOOP-04**: Recording stops automatically after `d` seconds
+- [ ] **LOOP-05**: User can manually stop the current recording early via a large, always-visible stop button
+- [ ] **LOOP-06**: If `r` is true, the just-recorded answer plays back automatically once recording stops
 - [ ] **LOOP-07**: After each question (and its playback, if enabled), a 3-second countdown transitions to the next question
 - [ ] **LOOP-08**: The session completes automatically once `question_count` questions have been answered
 
@@ -37,15 +37,15 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### History
 
-- [x] **HIST-01**: Every session (completed or stopped early) appears in an Exercise History list
-- [x] **HIST-02**: Opening a session in history shows the list of its questions alongside their recordings
-- [x] **HIST-03**: Tapping a question in a session's detail view plays that question's recording
-- [x] **HIST-04**: History entries and their recordings persist across app restarts
+- [ ] **HIST-01**: Every session (completed or stopped early) appears in an Exercise History list
+- [ ] **HIST-02**: Opening a session in history shows the list of its questions alongside their recordings
+- [ ] **HIST-03**: Tapping a question in a session's detail view plays that question's recording
+- [ ] **HIST-04**: History entries and their recordings persist across app restarts
 
 ### Local Persistence
 
-- [x] **PERSIST-01**: Each answered question (audio file + metadata) is written to local storage immediately after capture, not buffered until session end
-- [x] **PERSIST-02**: If the app is killed or crashes mid-session, all questions already answered before the crash are still visible in history on relaunch
+- [ ] **PERSIST-01**: Each answered question (audio file + metadata) is written to local storage immediately after capture, not buffered until session end
+- [ ] **PERSIST-02**: If the app is killed or crashes mid-session, all questions already answered before the crash are still visible in history on relaunch
 
 ### Question Bank
 
@@ -109,22 +109,22 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SETUP-07 | Phase 2 | Pending |
 | LOOP-01 | Phase 2 | Pending |
 | LOOP-02 | Phase 2 | Pending |
-| LOOP-03 | Phase 1 | Complete |
-| LOOP-04 | Phase 1 | Complete |
-| LOOP-05 | Phase 1 | Complete |
-| LOOP-06 | Phase 1 | Complete |
+| LOOP-03 | Phase 1 | Gaps Found |
+| LOOP-04 | Phase 1 | Gaps Found |
+| LOOP-05 | Phase 1 | Gaps Found |
+| LOOP-06 | Phase 1 | Gaps Found |
 | LOOP-07 | Phase 2 | Pending |
 | LOOP-08 | Phase 2 | Pending |
 | CTRL-01 | Phase 2 | Pending |
 | CTRL-02 | Phase 2 | Pending |
 | CTRL-03 | Phase 2 | Pending |
 | CTRL-04 | Phase 2 | Pending |
-| HIST-01 | Phase 1 | Complete |
-| HIST-02 | Phase 1 | Complete |
-| HIST-03 | Phase 1 | Complete |
-| HIST-04 | Phase 1 | Complete |
-| PERSIST-01 | Phase 1 | Complete |
-| PERSIST-02 | Phase 1 | Complete |
+| HIST-01 | Phase 1 | Gaps Found |
+| HIST-02 | Phase 1 | Gaps Found |
+| HIST-03 | Phase 1 | Gaps Found |
+| HIST-04 | Phase 1 | Gaps Found |
+| PERSIST-01 | Phase 1 | Gaps Found |
+| PERSIST-02 | Phase 1 | Gaps Found |
 | BANK-01 | Phase 3 | Pending |
 | BANK-02 | Phase 3 | Pending |
 | BANK-03 | Phase 3 | Pending |
