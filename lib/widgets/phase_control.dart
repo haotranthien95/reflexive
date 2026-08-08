@@ -78,6 +78,7 @@ class PhaseControl extends StatelessWidget {
     required this.onStop,
     required this.onStart,
     this.recordingSecondsRemaining,
+    this.isFirstQuestion = true,
     this.onViewSession,
     this.onBackToSetup,
   });
@@ -93,6 +94,15 @@ class PhaseControl extends StatelessWidget {
   /// Seconds left on the `d` deadline, rendered beneath STOP (D-21). Null
   /// renders no readout rather than a placeholder.
   final int? recordingSecondsRemaining;
+
+  /// Which of the TWO get-ready captions this 3·2·1 carries.
+  ///
+  /// The same countdown surface opens the session (LOOP-01) and separates every
+  /// pair of questions (LOOP-07), and the Copywriting Contract gives each its
+  /// own line — see the two literals at the `getReady` case below. The caption
+  /// is the only difference between them: one phase, one key, so the totality
+  /// assertion still sees exactly one keyed control here.
+  final bool isFirstQuestion;
 
   /// Completion state: opens this session in History. A null callback renders a
   /// DISABLED button rather than crashing — a caller that forgets one must not
@@ -124,7 +134,7 @@ class PhaseControl extends StatelessWidget {
 
       case PracticePhase.getReady:
         return Text(
-          'Get ready…',
+          isFirstQuestion ? 'Get ready…' : 'Next question…',
           key: kPhaseControlKeys[PracticePhase.getReady],
           textAlign: TextAlign.center,
           style: theme.textTheme.bodyLarge,
