@@ -347,6 +347,12 @@ None - no external service configuration required. Running on a device requires 
 - PERSIST-02 force-kill-and-relaunch test (D-07) — the phase's defining risk, explicitly not inferable from unit tests.
 - Real microphone capture, the 60 s auto-stop firing, audible auto-replay with no mic feedback, and History/detail replay on a real device (coverage items D1–D4, D7, D9, D10).
 
+## Self-Check: PASSED
+
+All 16 claimed created files and 5 modified files exist on disk. All four claimed commits
+(`2be3882`, `f415e6f`, `5641491`, `530f5c0`) are present in `git log`. `flutter analyze`
+reports zero issues and `flutter test` reports 17/17 passing.
+
 ---
 *Phase: 01-record-save-replay-a-single-answer-crash-safe*
 *Completed: 2026-08-08*
