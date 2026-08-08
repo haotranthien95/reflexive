@@ -11,7 +11,12 @@ import '../services/recording_service.dart';
 import '../utils/audio_paths.dart';
 
 /// Where the practice loop currently is.
-enum PracticePhase { idle, recording, saving, replaying, error }
+///
+/// [arming] sits deliberately between [idle] and [recording]: it is the window
+/// in which `RecordingService.start()` is still in flight. The screen must not
+/// claim to be recording — no listening mascot, no STOP button — until the
+/// microphone is actually live.
+enum PracticePhase { idle, arming, recording, saving, replaying, error }
 
 /// The single user-facing failure message for this phase, verbatim from the
 /// UI-SPEC Copywriting Contract.
@@ -46,7 +51,13 @@ class PracticeState extends ChangeNotifier {
   /// The prompt currently shown to the user.
   String currentQuestion = kQuestions.first;
 
-  PracticePhase phase = PracticePhase.idle;
+  /// Starts at [PracticePhase.arming], not [PracticePhase.idle]: the screen's
+  /// bootstrap awaits the orphan sweep before the first `startNewQuestion()`,
+  /// and `idle` renders a recovery control that would otherwise flash on every
+  /// cold launch before anything has gone wrong. `arming` is the honest
+  /// description of that window; `idle` keeps its control for any path that
+  /// reaches it without being the launch state.
+  PracticePhase phase = PracticePhase.arming;
 
   String? errorMessage;
 
@@ -54,6 +65,27 @@ class PracticeState extends ChangeNotifier {
 
   /// DB-relative path of the recording currently being captured.
   String? _currentRelativePath;
+
+  /// Non-null while a `startNewQuestion()` is in flight — the state half of the
+  /// re-entrancy guard (the service half lives in [RecordingService.start]).
+  Future<void>? _startInFlight;
+
+  bool _disposed = false;
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  /// [notifyListeners] that is safe after [dispose].
+  ///
+  /// The loop is a chain of awaits over the recorder, the disk and the player;
+  /// any of them can resolve after the screen has been torn down.
+  void _notify() {
+    if (_disposed) return;
+    notifyListeners();
+  }
 
   /// Picks the next prompt, avoiding an immediate repeat where possible.
   String _pickQuestion() {
@@ -72,31 +104,78 @@ class PracticeState extends ChangeNotifier {
   /// Shows a fresh question and immediately starts recording — no Start button
   /// and no confirmation (D-01).
   ///
+  /// Re-entrant calls collapse onto the in-flight one. Without this, a Retry
+  /// tap landing on top of the loop's own reset would arm two recorders and
+  /// commit a `question_answers` row naming a file the surviving recorder was
+  /// never told to write.
+  Future<void> startNewQuestion() {
+    final inFlight = _startInFlight;
+    if (inFlight != null) return inFlight;
+    final started =
+        _startNewQuestion().whenComplete(() => _startInFlight = null);
+    _startInFlight = started;
+    return started;
+  }
+
   /// If the microphone is unavailable (permission denied, or any other recorder
   /// failure) the loop moves to [PracticePhase.error] instead of crashing, and
   /// writes nothing at all to the database.
-  Future<void> startNewQuestion() async {
+  Future<void> _startNewQuestion() async {
     currentQuestion = _pickQuestion();
     errorMessage = null;
-    phase = PracticePhase.recording;
-    notifyListeners();
+    // NOT `recording` yet: the recorder has not been armed, so claiming to be
+    // recording here would put a STOP button and a listening mascot on screen
+    // while the microphone is still cold. D-01 is untouched — recording still
+    // begins with no user action; only the claim waits.
+    phase = PracticePhase.arming;
+    _notify();
 
     try {
       final dir = await ensureRecordingsDir();
-      final fileName = '${DateTime.now().millisecondsSinceEpoch}.m4a';
-      _currentRelativePath = recordingRelativePath(fileName);
+      if (_disposed) return;
+
+      // The random suffix is load-bearing: two recordings starting inside the
+      // same millisecond would otherwise share a file name and one would
+      // silently overwrite the other's saved answer.
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}'
+          '_${_random.nextInt(1 << 20)}.m4a';
       final absolutePath = p.join(dir.path, fileName);
 
       await recordingService.start(
         absolutePath,
-        onAutoStop: () => unawaited(stopRecording()),
+        onAutoStop: () => unawaited(_onAutoStop()),
       );
+      if (_disposed) return;
+
+      // Only now is the microphone genuinely live.
+      _currentRelativePath = recordingRelativePath(fileName);
+      phase = PracticePhase.recording;
+      _notify();
     } catch (_) {
       // Deliberately swallows the exception object: only the fixed UI-SPEC copy
       // ever reaches the user. Nothing is persisted on this path — there is no
       // finalized audio file, so there must be no session or answer row.
       _currentRelativePath = null;
       _fail();
+    }
+  }
+
+  /// The 60 s deadline landing (D-09).
+  ///
+  /// When the loop is still recording this is an ordinary stop. When it is NOT
+  /// — for example a stop signal landed during the arming window and pushed the
+  /// loop into [PracticePhase.error] — the recorder that finished arming
+  /// afterwards must still be finalized, or it would keep capturing unbounded
+  /// past [kMaxRecordingDuration] behind an error banner.
+  Future<void> _onAutoStop() async {
+    if (phase == PracticePhase.recording) {
+      await stopRecording();
+      return;
+    }
+    try {
+      await recordingService.stop();
+    } catch (_) {
+      // Best-effort backstop; there is nothing further to recover here.
     }
   }
 
@@ -109,7 +188,7 @@ class PracticeState extends ChangeNotifier {
   void _fail() {
     phase = PracticePhase.error;
     errorMessage = kRecordingErrorMessage;
-    notifyListeners();
+    _notify();
   }
 
   /// Ends the current recording — invoked by the Stop button and by the 60 s
@@ -118,17 +197,36 @@ class PracticeState extends ChangeNotifier {
   /// Ordering here is the crash-safety contract (D-08/D-10): the DB write only
   /// happens after `stop()` has returned a finalized path, and the replay only
   /// happens after that write has committed.
+  ///
+  /// EVERY await below is guarded. That is not defensive decoration: it is what
+  /// makes [PracticePhase.saving] and [PracticePhase.replaying] strictly
+  /// transient, and therefore what makes it safe for `PhaseControl` to render
+  /// them as status labels rather than escape hatches. Reintroducing an
+  /// unguarded await here turns both into dead ends.
   Future<void> stopRecording() async {
     if (phase != PracticePhase.recording) return;
     phase = PracticePhase.saving;
-    notifyListeners();
+    _notify();
 
-    final finalizedPath = await recordingService.stop();
+    final String? finalizedPath;
+    try {
+      finalizedPath = await recordingService.stop();
+    } catch (_) {
+      // A recorder that cannot finalize has produced no usable file. Surface
+      // the fixed copy so the banner's Retry is reachable — never leave the
+      // loop parked in `saving`.
+      _currentRelativePath = null;
+      _fail();
+      return;
+    }
+    if (_disposed) return;
+
     if (finalizedPath == null) {
-      // A stop was already in flight (first-stop-wins) or the recorder had
-      // nothing to finalize. Nothing was captured, so nothing is saved.
-      phase = PracticePhase.idle;
-      notifyListeners();
+      // Every reachable route to a null finalized path is a recorder-level
+      // failure. Nothing was captured, so nothing is saved — but the user still
+      // needs a way forward, which only the error phase provides.
+      _currentRelativePath = null;
+      _fail();
       return;
     }
 
@@ -141,19 +239,39 @@ class PracticeState extends ChangeNotifier {
         questionText: currentQuestion,
         audioRelativePath: relativePath,
       );
-    } catch (_) {
+    } catch (error, stack) {
       // The transaction rolled back, so nothing partial was written. Surface
       // the same fixed copy and stop here — the loop must NOT auto-restart into
       // another recording after a save failure; the user's Retry tap does that.
+      //
+      // The cause goes to developer-facing sinks ONLY. The UI-SPEC Copywriting
+      // Contract locks one string for both the mic-denied and save-failure
+      // cases, so not a character of this reaches the screen (T-04-04).
+      debugPrint('EnglishReflex: saving the answer failed: $error');
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stack,
+          library: 'englishreflex',
+          context: ErrorDescription('saving a finished answer'),
+        ),
+      );
       _fail();
       return;
     }
+    if (_disposed) return;
 
     phase = PracticePhase.replaying;
-    notifyListeners();
+    _notify();
 
-    final absolutePath = await toAbsolutePath(relativePath);
-    await audioPlayerService.play(absolutePath, awaitCompletion: true);
+    try {
+      final absolutePath = await toAbsolutePath(relativePath);
+      await audioPlayerService.play(absolutePath, awaitCompletion: true);
+    } catch (_) {
+      // The answer is already committed, so a replay failure must never block
+      // the loop — fall straight through to the reset below.
+    }
+    if (_disposed) return;
 
     // Reset to a fresh question and re-arm recording (D-03).
     await startNewQuestion();
