@@ -300,6 +300,14 @@ None — no external service configuration, no new package, no new Android/iOS p
 
 **Carried into Phase 2 unchanged** (deliberately not closed here, per the plan's review disposition): WR-07 (one error string covers both mic-denied and save-failure — splitting it needs a UI-SPEC amendment), WR-08 (app-lifecycle handling: backgrounding, phone call mid-recording), WR-10 (`pruneOrphanRecordings`'s caller contract is prose, not mechanical), IN-03, IN-04, IN-05.
 
+## Self-Check: PASSED
+
+- Files created — all present on disk: `lib/widgets/phase_control.dart`, `test/widgets/phase_control_test.dart`, `test/services/recording_service_test.dart`, `test/services/audio_player_service_test.dart`, `.planning/phases/01-record-save-replay-a-single-answer-crash-safe/01-04-SUMMARY.md`
+- Commits verified in `git log`: `a4b14cb`, `1f2fb77`, `83db396`, `3a5677a`, `541f12e`, `335bbc7`, `82a6e52`
+- `flutter analyze`: no issues. `flutter test`: 56/56 passing (up from the 32 recorded in `01-VERIFICATION.md`).
+- No tracked file was deleted by any commit in this plan (`git diff --diff-filter=D cd5cdae HEAD` is empty).
+- No shared orchestrator artifact (`STATE.md`, `ROADMAP.md`) was touched; no file outside this plan's `files_modified` list plus the new `lib/widgets/phase_control.dart` was modified.
+
 ---
 *Phase: 01-record-save-replay-a-single-answer-crash-safe*
 *Completed: 2026-08-08*
