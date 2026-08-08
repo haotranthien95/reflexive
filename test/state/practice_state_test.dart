@@ -20,8 +20,15 @@ class FakeRecordingService extends RecordingService {
   /// Set to true to simulate a second stop signal losing the race.
   bool stopReturnsNull = false;
 
+  /// Set to true to simulate the OS refusing microphone access.
+  bool throwPermissionDenied = false;
+
   @override
   Future<void> start(String absoluteFilePath, {void Function()? onAutoStop}) async {
+    if (throwPermissionDenied) {
+      calls.add('start-denied');
+      throw const RecordingPermissionDeniedException();
+    }
     lastRequestedPath = absoluteFilePath;
     calls.add('start');
   }
@@ -59,6 +66,18 @@ class FakeAudioPlayerService extends AudioPlayerService {
 
   @override
   Future<void> dispose() async {}
+}
+
+/// A [DatabaseHelper] whose crash-safety-critical write always fails, standing
+/// in for a full disk / corrupt database at the exact moment of the save.
+class FailingDatabaseHelper extends DatabaseHelper {
+  @override
+  Future<int> insertAnsweredSession({
+    required String questionText,
+    required String audioRelativePath,
+  }) async {
+    throw StateError('disk full: /private/var/mobile/.../englishreflex.db');
+  }
 }
 
 void main() {
@@ -160,5 +179,66 @@ void main() {
       expect(await databaseHelper.listAnswersForSession(session.id!),
           hasLength(1));
     }
+  });
+
+  group('error handling', () {
+    test('a denied microphone permission shows the exact UI-SPEC copy and '
+        'writes nothing', () async {
+      recordingService.throwPermissionDenied = true;
+
+      await state.startNewQuestion();
+
+      expect(state.phase, PracticePhase.error);
+      // Verbatim UI-SPEC Copywriting Contract string — no paraphrase, and no
+      // exception text, class name or file path leaking through.
+      expect(
+        state.errorMessage,
+        'Recording failed — check your microphone permission and try again.',
+      );
+      expect(state.errorMessage, isNot(contains('Exception')));
+
+      // Prohibition: a denied attempt never writes a placeholder row.
+      expect(await databaseHelper.listSessions(), isEmpty);
+    });
+
+    test('retry() re-attempts recording once permission is granted', () async {
+      recordingService.throwPermissionDenied = true;
+      await state.startNewQuestion();
+      expect(state.phase, PracticePhase.error);
+
+      // The user opens Settings, grants the microphone, comes back and taps
+      // Retry on the banner.
+      recordingService.throwPermissionDenied = false;
+      await state.retry();
+
+      expect(state.phase, PracticePhase.recording);
+      expect(state.errorMessage, isNull);
+      expect(calls, ['start-denied', 'start']);
+    });
+
+    test('a save failure shows the same copy and does NOT auto-restart '
+        'recording', () async {
+      final failingHelper = FailingDatabaseHelper();
+      final failingState = PracticeState(
+        recordingService: recordingService,
+        audioPlayerService: audioPlayerService,
+        databaseHelper: failingHelper,
+      );
+      addTearDown(failingState.dispose);
+
+      await failingState.startNewQuestion();
+      await failingState.stopRecording();
+
+      expect(failingState.phase, PracticePhase.error);
+      expect(
+        failingState.errorMessage,
+        'Recording failed — check your microphone permission and try again.',
+      );
+      // No replay, and crucially no second 'start': the loop waits for the
+      // user's Retry tap rather than spinning into another recording.
+      expect(calls, ['start', 'stop']);
+      // The real (non-failing) database is untouched.
+      expect(await databaseHelper.listSessions(), isEmpty);
+    });
   });
 }

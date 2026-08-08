@@ -24,8 +24,13 @@ import '../utils/audio_paths.dart';
 /// );
 /// ```
 ///
-/// All statements go through sqflite's typed `insert()`/`query()` helpers with
-/// `whereArgs` — never string-interpolated SQL (T-01-02).
+/// Every statement carrying a *value* goes through sqflite's typed
+/// `insert()`/`query()` helpers with `whereArgs` — no value is ever
+/// concatenated into SQL text (T-01-02, re-audited in Plan 3). The only
+/// `execute()` calls in this file are the fixed `PRAGMA` and the two
+/// `CREATE TABLE` statements, whose sole interpolations are this class's own
+/// `static const` table-name identifiers — SQL identifiers cannot be bound as
+/// parameters, and no user or file input reaches them.
 class DatabaseHelper {
   static const String kDatabaseFileName = 'englishreflex.db';
   static const String kSessionsTable = 'sessions';
@@ -39,9 +44,33 @@ class DatabaseHelper {
     if (existing != null) return existing;
     final docsDir = await appDocumentsDir();
     final path = p.join(docsDir.path, kDatabaseFileName);
-    final db = await openDatabase(path, version: 1, onCreate: _onCreate);
+    final db = await openDatabase(
+      path,
+      version: 1,
+      onConfigure: _onConfigure,
+      onCreate: _onCreate,
+    );
     _db = db;
     return db;
+  }
+
+  /// Runs on EVERY open, before any migration or query.
+  ///
+  /// SQLite ignores `REFERENCES` constraints unless foreign-key enforcement is
+  /// switched on per connection, so the `question_answers.session_id
+  /// REFERENCES sessions(id)` declaration written in Plan 1 was inert. Turning
+  /// it on here makes an orphaned answer row impossible at the DB layer — a
+  /// second line of defense behind [insertAnsweredSession]'s transaction
+  /// (T-03-01 / PERSIST-02 / D-08).
+  ///
+  /// Deliberately NOT a schema migration and NOT a version bump: the pragma is
+  /// connection state, and the `REFERENCES` clause already exists in databases
+  /// created by Plan 1. Devices that have already run the app therefore pick
+  /// enforcement up on their next launch with no upgrade path, and SQLite does
+  /// not re-validate pre-existing rows when the pragma is enabled — so an old
+  /// database can never fail to open because of this change.
+  Future<void> _onConfigure(Database db) async {
+    await db.execute('PRAGMA foreign_keys = ON');
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -106,6 +135,20 @@ CREATE TABLE $kQuestionAnswersTable (
       orderBy: 'id ASC',
     );
     return rows.map(QuestionAnswer.fromMap).toList();
+  }
+
+  /// Every audio path the database still points at, as DB-relative paths.
+  ///
+  /// Used to sweep recording files left behind on disk by a process kill that
+  /// happened mid-recording — those were never committed to the database, so
+  /// nothing references them (D-08: an interrupted recording leaves no trace).
+  Future<Set<String>> listReferencedAudioPaths() async {
+    final db = await database;
+    final rows = await db.query(
+      kQuestionAnswersTable,
+      columns: ['audio_path'],
+    );
+    return rows.map((row) => row['audio_path']! as String).toSet();
   }
 
   Future<void> close() async {
