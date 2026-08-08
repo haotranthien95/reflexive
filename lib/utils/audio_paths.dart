@@ -50,3 +50,37 @@ Future<String> toAbsolutePath(String relativePath) async {
 /// Builds the DB-stored relative path for a recording file name.
 String recordingRelativePath(String fileName) =>
     p.join(kRecordingsDirName, fileName);
+
+/// Deletes every file in the recordings directory that no database row points
+/// at, and returns how many were removed.
+///
+/// This is the disk half of D-08's "an interrupted recording leaves no trace".
+/// `package:record` streams into its output file while recording, so a process
+/// force-killed mid-recording leaves a partial, never-committed `.m4a` behind:
+/// invisible in History (nothing references it) but permanently occupying
+/// space. Sweeping it on the next launch makes "zero trace" literally true.
+///
+/// CALLER CONTRACT: must be awaited to completion BEFORE the next recording is
+/// armed. A file being written right now is by definition unreferenced, so
+/// running this concurrently with an active recording would delete it.
+///
+/// Best-effort by design: a file that cannot be deleted is a harmless leftover,
+/// never a reason to block the practice loop.
+Future<int> pruneOrphanRecordings(Set<String> referencedRelativePaths) async {
+  final dir = await ensureRecordingsDir();
+  var deleted = 0;
+  await for (final entity in dir.list(followLinks: false)) {
+    if (entity is! File) continue;
+    if (referencedRelativePaths
+        .contains(recordingRelativePath(p.basename(entity.path)))) {
+      continue;
+    }
+    try {
+      await entity.delete();
+      deleted++;
+    } catch (_) {
+      // Leave it; it is unreachable from the UI either way.
+    }
+  }
+  return deleted;
+}

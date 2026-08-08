@@ -94,6 +94,66 @@ void main() {
     });
   });
 
+  group('foreign key enforcement', () {
+    test('rejects an answer row pointing at a session that does not exist',
+        () async {
+      // Proves PRAGMA foreign_keys = ON is actually applied by
+      // DatabaseHelper.onConfigure — a REFERENCES clause alone is inert in
+      // SQLite, so without the pragma this insert would silently succeed and
+      // create an orphaned row (T-03-01).
+      final db = await helper.database;
+
+      expect(
+        () => db.insert(DatabaseHelper.kQuestionAnswersTable, {
+          'session_id': 999,
+          'question_text': 'Orphan',
+          'audio_path': 'recordings/orphan.m4a',
+          'created_at': DateTime.now().toIso8601String(),
+        }),
+        throwsA(isA<DatabaseException>()),
+      );
+
+      expect(await helper.listSessions(), isEmpty);
+    });
+
+    test('the pragma is on for the helper\'s own connection', () async {
+      final db = await helper.database;
+      final result = await db.rawQuery('PRAGMA foreign_keys');
+      expect(result.single.values.single, 1);
+    });
+
+    test('a legitimate insert still succeeds with enforcement on', () async {
+      final sessionId = await helper.insertAnsweredSession(
+        questionText: 'Still works',
+        audioRelativePath: 'recordings/1.m4a',
+      );
+
+      expect(await helper.listAnswersForSession(sessionId), hasLength(1));
+    });
+  });
+
+  group('listReferencedAudioPaths', () {
+    test('returns nothing when no answer has been recorded', () async {
+      expect(await helper.listReferencedAudioPaths(), isEmpty);
+    });
+
+    test('returns the DB-relative path of every saved answer', () async {
+      await helper.insertAnsweredSession(
+        questionText: 'One',
+        audioRelativePath: 'recordings/1.m4a',
+      );
+      await helper.insertAnsweredSession(
+        questionText: 'Two',
+        audioRelativePath: 'recordings/2.m4a',
+      );
+
+      expect(
+        await helper.listReferencedAudioPaths(),
+        {'recordings/1.m4a', 'recordings/2.m4a'},
+      );
+    });
+  });
+
   group('listAnswersForSession', () {
     test('is scoped strictly to the requested session', () async {
       final first = await helper.insertAnsweredSession(

@@ -4,6 +4,7 @@ import '../db/database_helper.dart';
 import '../services/audio_player_service.dart';
 import '../services/recording_service.dart';
 import '../state/practice_state.dart';
+import '../utils/audio_paths.dart';
 import '../widgets/mascot.dart';
 import 'history_screen.dart';
 
@@ -28,8 +29,25 @@ class _PracticeScreenState extends State<PracticeScreen> {
       audioPlayerService: AudioPlayerService(),
       databaseHelper: DatabaseHelper(),
     );
+    _bootstrap();
+  }
+
+  /// Sweeps orphaned recordings, then arms the first recording.
+  ///
+  /// The sweep is awaited to completion *before* [PracticeState.startNewQuestion]
+  /// picks a file name, so the file this session is about to write can never be
+  /// a deletion candidate. See [pruneOrphanRecordings]'s caller contract.
+  Future<void> _bootstrap() async {
+    try {
+      await pruneOrphanRecordings(
+        await _state.databaseHelper.listReferencedAudioPaths(),
+      );
+    } catch (_) {
+      // Cleanup is best-effort; never let it stand between the user and the
+      // microphone.
+    }
     // Reflex framing: recording begins immediately, with no user action.
-    _state.startNewQuestion();
+    await _state.startNewQuestion();
   }
 
   @override
