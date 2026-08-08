@@ -34,13 +34,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Force-killing the app mid-use and relaunching still shows every already-recorded answer in history — nothing captured before the crash is lost.
   5. The recording and history screens use large, easily readable text and a simple, colorful, friendly visual style (not corporate/minimal-grey).
 
-**Plans**: 6 plans (3 executed, 3 gap-closure pending)
+**Plans**: 5/6 plans executed
 Plans:
 **Wave 1**
 
 - [x] 01-01-PLAN.md — Walking Skeleton: scaffold, persistence, and the record→save→replay→history loop
-- [ ] 01-04-PLAN.md — Gap closure: every practice phase has a way forward (arming state, guarded failure paths, first RecordingService tests)
-- [ ] 01-05-PLAN.md — Gap closure: Baloo 2 actually ships in a release build (bundled asset, runtime fetching off)
+- [x] 01-04-PLAN.md — Gap closure: every practice phase has a way forward (arming state, guarded failure paths, first RecordingService tests)
+- [x] 01-05-PLAN.md — Gap closure: Baloo 2 actually ships in a release build (bundled asset, runtime fetching off)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -106,7 +106,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Record, Save & Replay a Single Answer (Crash-Safe) | 3/6 | Gap closure planned |  |
+| 1. Record, Save & Replay a Single Answer (Crash-Safe) | 5/6 | In Progress|  |
 | 2. Full Timed Practice Session (Setup, Loop & Controls) | 0/TBD | Not started | - |
 | 3. Real Question Bank via Firestore | 0/TBD | Not started | - |
 | 4. Bulk Import, Seed Content & Screen Polish | 0/TBD | Not started | - |
