@@ -176,6 +176,18 @@ None — no external service configuration required. The font is bundled; nothin
 - One `backstop` item remains for device UAT (coverage `D4`): confirm in a **RELEASE build in airplane mode** that the face, palette and mascot read correctly, and that the longest question reflows at maximum OS text scale. A debug build cannot distinguish a bundled load from a cached fetch.
 - **Note for Phase 3 (Firestore):** that phase will add the `INTERNET` permission for the question bank. When it does, the font must stay bundled — restoring network access must not become an excuse to reintroduce the runtime font fetch, which is what this plan's guards are there to prevent.
 
+## Self-Check: PASSED
+
+All claimed files exist on disk and all claimed commits exist in git history.
+
+- `assets/fonts/Baloo2-SemiBold.ttf` (418064 bytes) — FOUND
+- `assets/fonts/OFL.txt` (4384 bytes) — FOUND
+- `test/theme/typography_test.dart` — FOUND
+- `lib/main.dart`, `pubspec.yaml`, `.claude/CLAUDE.md` — FOUND (modified)
+- `01-05-SUMMARY.md` — FOUND
+- `9b013a6`, `7232f7e`, `a4b2ebf` — all present in `git log`
+- Working tree clean; no file deletions in any commit
+
 ---
 *Phase: 01-record-save-replay-a-single-answer-crash-safe*
 *Completed: 2026-08-08*
