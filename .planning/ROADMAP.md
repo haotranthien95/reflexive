@@ -66,7 +66,7 @@ Plans:
   3. The session automatically completes once the configured `question_count` has been answered.
   4. An app bar with Pause/Resume and Stop is visible throughout the session; pausing freezes the current countdown/recording state, and tapping Stop requires confirmation before the session ends early.
 
-**Plans**: 1/5 plans executed
+**Plans**: 3/5 plans executed
 Plans:
 **Wave 1**
 
@@ -74,8 +74,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-02-PLAN.md — The full N-question loop: replay gate, inter-question countdown, automatic completion, bank cycling, and both countdown surfaces
-- [ ] 02-03-PLAN.md — Setup screen complete: CEFR chips, the three numeric readout+slider settings, and the auto-replay toggle
+- [x] 02-02-PLAN.md — The full N-question loop: replay gate, inter-question countdown, automatic completion, bank cycling, and both countdown surfaces
+- [x] 02-03-PLAN.md — Setup screen complete: CEFR chips, the three numeric readout+slider settings, and the auto-replay toggle
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -125,6 +125,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Record, Save & Replay a Single Answer (Crash-Safe) | 6/6 | Complete    | 2026-08-08 |
-| 2. Full Timed Practice Session (Setup, Loop & Controls) | 1/5 | In Progress|  |
+| 2. Full Timed Practice Session (Setup, Loop & Controls) | 3/5 | In Progress|  |
 | 3. Real Question Bank via Firestore | 0/TBD | Not started | - |
 | 4. Bulk Import, Seed Content & Screen Polish | 0/TBD | Not started | - |
