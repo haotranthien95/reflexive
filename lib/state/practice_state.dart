@@ -203,6 +203,12 @@ class PracticeState extends ChangeNotifier {
   /// transient, and therefore what makes it safe for `PhaseControl` to render
   /// them as status labels rather than escape hatches. Reintroducing an
   /// unguarded await here turns both into dead ends.
+  ///
+  /// Disposal is handled on the same principle. The `_disposed` checks sit only
+  /// AFTER the `insertAnsweredSession` commit, never between the recorder
+  /// finalizing the file and that commit: once the audio exists on disk the
+  /// save is unconditional, and only the notification, the replay and the
+  /// re-arm depend on the screen still being alive.
   Future<void> stopRecording() async {
     if (phase != PracticePhase.recording) return;
     phase = PracticePhase.saving;
@@ -219,8 +225,14 @@ class PracticeState extends ChangeNotifier {
       _fail();
       return;
     }
-    if (_disposed) return;
 
+    // NOTE: deliberately NO `if (_disposed) return;` here. Once stop() has
+    // returned, the recorder has already finalized the user's answer on disk,
+    // and the save below IS the crash-safety contract: an answer that was fully
+    // spoken must never be silently discarded just because the screen is being
+    // torn down. Returning here left the .m4a on disk with no row referencing
+    // it, so the next launch's pruneOrphanRecordings() deleted it. The
+    // disposal check belongs AFTER the commit — see below.
     if (finalizedPath == null) {
       // Every reachable route to a null finalized path is a recorder-level
       // failure. Nothing was captured, so nothing is saved — but the user still
@@ -259,6 +271,9 @@ class PracticeState extends ChangeNotifier {
       _fail();
       return;
     }
+    // Safe here and only here: the answer is committed, so everything that
+    // remains — the replay and the re-arm — is UI-facing work that a torn-down
+    // screen has no use for.
     if (_disposed) return;
 
     phase = PracticePhase.replaying;

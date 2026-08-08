@@ -249,6 +249,50 @@ void main() {
     expect(secondPath, isNot(firstPath));
   });
 
+  test('a disposal racing the stop still saves the finished answer', () async {
+    // REGRESSION GUARD (WR-01). The `_disposed` early return used to sit
+    // BETWEEN recordingService.stop() and insertAnsweredSession() — i.e. on the
+    // wrong side of the commit. By the time that check ran the recorder had
+    // ALREADY finalized the .m4a on disk, so a teardown landing in that window
+    // left an answer the user had fully spoken with no row referencing it, to
+    // be swept off disk by the next launch's pruneOrphanRecordings(). That
+    // directly violates the 01-04 prohibition: "An answer the user has already
+    // spoken and finished must never be silently discarded."
+    //
+    // Deliberately a plain `test()`, not a `testWidgets()`: initialising the
+    // widget binding in this file would make FlutterError.onError fail the
+    // save-failure test below (IN-04).
+    //
+    // Its own PracticeState so the shared one is still disposable in tearDown.
+    final racingState = PracticeState(
+      recordingService: recordingService,
+      audioPlayerService: audioPlayerService,
+      databaseHelper: databaseHelper,
+    );
+
+    await racingState.startNewQuestion();
+
+    // stopRecording() runs synchronously up to `await recordingService.stop()`,
+    // so this dispose lands in exactly the window the finalized file exists in.
+    final Future<void> stopping = racingState.stopRecording();
+    racingState.dispose();
+    await stopping;
+
+    final sessions = await databaseHelper.listSessions();
+    expect(sessions, hasLength(1),
+        reason: 'a finalized recording must be persisted even mid-teardown');
+
+    final answers =
+        await databaseHelper.listAnswersForSession(sessions.single.id!);
+    expect(answers, hasLength(1));
+    expect(answers.single.audioPath,
+        endsWith(p.basename(recordingService.lastRequestedPath!)));
+
+    // Only the UI-facing work is skipped after disposal: no replay, and no
+    // re-arm behind a screen that no longer exists.
+    expect(calls, ['start', 'stop']);
+  });
+
   group('error handling', () {
     test('a denied microphone permission shows the exact UI-SPEC copy and '
         'writes nothing', () async {
