@@ -34,7 +34,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Force-killing the app mid-use and relaunching still shows every already-recorded answer in history — nothing captured before the crash is lost.
   5. The recording and history screens use large, easily readable text and a simple, colorful, friendly visual style (not corporate/minimal-grey).
 
-**Plans**: 5/6 plans executed
+**Plans**: 6/6 plans executed
 Plans:
 **Wave 1**
 
@@ -45,7 +45,7 @@ Plans:
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 01-02-PLAN.md — Visual & typography system (warm palette, Baloo 2, mascot)
-- [ ] 01-06-PLAN.md — Gap closure: history never presents a read failure as missing data, plus requirement-tracking reconciliation
+- [x] 01-06-PLAN.md — Gap closure: history never presents a read failure as missing data, plus requirement-tracking reconciliation
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -106,7 +106,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Record, Save & Replay a Single Answer (Crash-Safe) | 5/6 | In Progress|  |
+| 1. Record, Save & Replay a Single Answer (Crash-Safe) | 6/6 | In Progress|  |
 | 2. Full Timed Practice Session (Setup, Loop & Controls) | 0/TBD | Not started | - |
 | 3. Real Question Bank via Firestore | 0/TBD | Not started | - |
 | 4. Bulk Import, Seed Content & Screen Polish | 0/TBD | Not started | - |
