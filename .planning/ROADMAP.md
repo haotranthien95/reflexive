@@ -36,13 +36,20 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Plans**: 6 plans (3 executed, 3 gap-closure pending)
 Plans:
+**Wave 1**
 
 - [x] 01-01-PLAN.md — Walking Skeleton: scaffold, persistence, and the record→save→replay→history loop
-- [x] 01-02-PLAN.md — Visual & typography system (warm palette, Baloo 2, mascot)
-- [x] 01-03-PLAN.md — Crash-safety hardening (error handling, FK enforcement, D-07 force-kill test)
 - [ ] 01-04-PLAN.md — Gap closure: every practice phase has a way forward (arming state, guarded failure paths, first RecordingService tests)
 - [ ] 01-05-PLAN.md — Gap closure: Baloo 2 actually ships in a release build (bundled asset, runtime fetching off)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 01-02-PLAN.md — Visual & typography system (warm palette, Baloo 2, mascot)
 - [ ] 01-06-PLAN.md — Gap closure: history never presents a read failure as missing data, plus requirement-tracking reconciliation
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 01-03-PLAN.md — Crash-safety hardening (error handling, FK enforcement, D-07 force-kill test)
 
 **UI hint**: yes
 
