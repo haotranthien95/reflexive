@@ -154,6 +154,51 @@ void main() {
     });
   });
 
+  group('database (lazy open)', () {
+    test('two overlapping first accesses open exactly one connection',
+        () async {
+      // The launch-time orphan sweep and an immediate History tap can both
+      // reach the getter before either has finished opening. Count the
+      // documents-dir resolutions: `_open()` performs exactly one, so two
+      // resolutions means the database was opened twice and one handle leaked
+      // for the process lifetime.
+      var docsDirResolutions = 0;
+      documentsDirProvider = () async {
+        docsDirResolutions++;
+        return tempDir;
+      };
+
+      // Deliberately NOT awaited in sequence — both requests are in flight.
+      final futureA = helper.database;
+      final futureB = helper.database;
+      final a = await futureA;
+      final b = await futureB;
+
+      expect(identical(a, b), isTrue,
+          reason: 'both accesses must resolve to the same Database instance');
+      expect(docsDirResolutions, 1,
+          reason: 'the open path must run exactly once');
+    });
+
+    test('close() leaves the helper able to open again', () async {
+      final first = await helper.database;
+      expect(first.isOpen, isTrue);
+
+      await helper.close();
+
+      final second = await helper.database;
+      expect(second.isOpen, isTrue);
+
+      // And the reopened connection is a working database, not a stale handle.
+      expect(await helper.listSessions(), isEmpty);
+    });
+
+    test('close() before the database was ever opened is a no-op', () async {
+      await helper.close();
+      expect(await helper.listSessions(), isEmpty);
+    });
+  });
+
   group('listAnswersForSession', () {
     test('is scoped strictly to the requested session', () async {
       final first = await helper.insertAnsweredSession(
