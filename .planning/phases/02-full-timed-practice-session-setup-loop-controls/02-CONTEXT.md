@@ -101,7 +101,7 @@ Phase 1's crash-safety contract is inherited unchanged: an answer is written onl
 - **`lib/main.dart`** — `home: const PracticeScreen()` becomes the new Setup screen (D-28); `configureFonts()` and the theme stay untouched.
 - **`lib/screens/practice_screen.dart`** — currently self-bootstraps (`initState` → orphan sweep → `startNewQuestion()`) and owns the History app-bar action. Phase 2 changes it to accept a session configuration, replaces the History action with Pause/Stop (D-29), and moves the orphan sweep to app/Setup start-up so it still runs exactly once before any file name is chosen.
 - **`lib/data/questions.dart`** — `kQuestions` is the placeholder bank; Phase 2 expands it to ~20 and adds the placeholder subject list (D-19/D-23) **behind a seam Phase 3 can swap for Firestore**.
-- **`android/app/src/main/AndroidManifest.xml` / iOS `Info.plist`** — already carry the microphone permission; `wakelock_plus` (D-30) needs no new Android permission (`WAKE_LOCK` is added by the plugin's own manifest).
+- **`android/app/src/main/AndroidManifest.xml` / iOS `Info.plist`** — already carry the microphone permission; `wakelock_plus` (D-30) needs **no new permission on either platform**. *(Corrected 2026-08-08 after Phase 2 research: the plugin's own manifest declares **zero** permissions — it uses `WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON` on Android and `isIdleTimerDisabled` on iOS, not the `WAKE_LOCK` permission this file originally claimed. The conclusion is unchanged and in fact stronger for the release build's deliberate no-network/no-extra-permission stance.)*
 
 </code_context>
 
