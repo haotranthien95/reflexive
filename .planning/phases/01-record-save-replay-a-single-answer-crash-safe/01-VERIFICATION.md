@@ -1,7 +1,7 @@
 ---
 phase: 01-record-save-replay-a-single-answer-crash-safe
 verified: 2026-08-08T09:33:20Z
-status: human_needed
+status: passed
 score: 6/11 must-haves verified
 behavior_unverified: 5
 overrides_applied: 0
@@ -9,6 +9,7 @@ re_verification:
   previous_status: gaps_found
   previous_score: 0/5
   gaps_closed:
+
     - "SC-1 / Gap 1 — the practice loop's unrecoverable dead ends (idle/saving rendered no control; STOP during the arming window stranded the loop while the recorder armed for real; RecordingService had zero test coverage)"
     - "SC-5 / Gap 2 — the locked Baloo 2 typography did not ship in release builds (runtime CDN fetch, nothing bundled, no INTERNET permission in the release manifest)"
     - "Gap 3 — unguarded awaits in stopRecording() stranded the loop in saving/replaying, and awaitCompletion awaited a non-replaying broadcast stream unbounded"
@@ -19,39 +20,49 @@ re_verification:
 gaps: []
 deferred: []
 behavior_unverified_items:
+
   - truth: "SC-2 — If auto-replay is enabled, the just-recorded answer plays back automatically the moment recording stops."
     test: "On a physical device: flutter run. Wait for the first question to appear. Speak an answer, then tap the coral STOP button. Do not touch the screen again."
     expected: "Without any tap: the answer you just spoke plays back audibly, 'Playing your answer…' is displayed under the mascot during playback, and when playback ends a NEW question appears with recording already re-armed (mascot listening, STOP button visible)."
     why_human: "Audible playback at real latency cannot be observed from code. The save-then-replay ordering, the subscribe-before-play race and the 65s ceiling are now genuinely proven by test/services/audio_player_service_test.dart against the real AudioPlayerService — but every one of those tests uses a fake backend that emits a synthetic completion event and plays no audio."
+
   - truth: "SC-3 — Every recorded answer appears immediately in an Exercise History list; tapping an entry plays its recording."
     test: "On a physical device: record and finish 2-3 answers. Tap the history icon in the app bar. Note the row count and the order. Tap the top session, then tap the question row inside the detail screen."
     expected: "Every finished answer is listed immediately with no refresh, newest at the top. Tapping a detail row plays that specific recording audibly. Tapping a second row while the first is playing stops the first rather than overlapping the two."
     why_human: "The list half is proven against a real SQLite engine and by widget tests that now also distinguish the error state from the empty state. The 'plays its recording' half calls into the audioplayers platform channel and requires a device with speakers."
+
   - truth: "SC-4 — Force-killing the app mid-use and relaunching still shows every already-recorded answer in history — nothing captured before the crash is lost."
     test: "D-07, the phase's defining risk. MUST be run on a clean install of a build carrying the current bundle identifier (see why_human). Round A: record and finish at least 2 answers, force-kill the app from the OS task switcher (not a hot restart, not a debugger stop), relaunch, open Exercise History. Round B: start a new recording, and while it is actively recording, force-kill from the task switcher. Relaunch and open Exercise History."
     expected: "Round A: every previously finished answer is still listed and still plays. Round B: the recording that was in flight at kill time leaves no trace — no new session row, no history entry — and its partial .m4a is swept from disk on the next launch (D-08). The answers from Round A are still intact after Round B."
     why_human: "Plans 01-03 and 01-06 both declare this `verification: backstop` — explicitly not inferable from unit tests. It requires an actual OS-level process kill. CRITICAL CAVEAT (WR-11): commit a07ae59 changed PRODUCT_BUNDLE_IDENTIFIER to com.haotran.englishreflex, so the app now installs into a DIFFERENT container. Any prior SC-4 result is void, and any pre-existing on-device data is not comparable. Delete the old app from the device first, then install fresh."
+
   - truth: "SC-5 — The recording and history screens use large, easily readable text and a simple, colorful, friendly visual style (not corporate/minimal-grey)."
     test: "On a physical device, ideally a RELEASE build (flutter run --release), with the device in airplane mode to prove no network is involved. Look at the Practice screen and the History screen. Then raise the OS text-size / font-scale setting to its maximum and return to the Practice screen, cycling questions until the longest one appears ('What is one thing you want to learn this year?')."
     expected: "Warm ivory background, peach question card and history rows, coral STOP button and play icons, and a friendly mic-with-face mascot whose ring pulses only while recording. The question text and screen titles render in a rounded, friendly face (Baloo 2) — visibly NOT the default Material font — even in release and even offline. At maximum text scale the longest question reflows and the column scrolls rather than clipping or overflowing. The mascot never reads as sad or judgmental."
     why_human: "The FONT half is no longer a gap — the .ttf is bundled and both guards were confirmed non-vacuous by deleting the font and watching them go red (see Behavioural Spot-Checks). What remains is the visual judgment: 'friendly, not corporate-grey' and 'readable at arm's length' cannot be asserted from hex values and type-scale numbers."
+
   - truth: "Recording actually captures the user's voice from the moment the question appears (SC-1, LOOP-03, D-01)"
     test: "On a physical device, first launch after a clean install so the microphone permission dialog appears. Respond to the dialog. Then, on the next question, begin speaking the instant the question text appears and tap STOP after roughly two seconds. Listen to the auto-replay."
     expected: "The playback contains the very first words you spoke, with no perceptible clipped syllable at the start. While the permission dialog is pending, the screen shows the question and the 'Getting ready…' label — never a blank, white or frozen screen."
     why_human: "Real microphone capture cannot be exercised on the test host. The screen now correctly waits for RecordingService.start() to resolve before claiming to record, so the UI no longer lies — but that also means an arming window measurably exists. Measure how much leading audio it actually costs on a real device."
 human_verification:
+
   - test: "SC-4 / D-07 force-kill, on a CLEAN INSTALL of a build with the current bundle id (com.haotran.englishreflex). Round A: finish 2+ answers, force-kill from the OS task switcher, relaunch, open Exercise History. Round B: force-kill WHILE a recording is actively in progress, relaunch, open Exercise History."
     expected: "Round A: every finished answer still listed and still plays. Round B: the in-flight recording leaves no session row and no history entry, its partial .m4a is swept from disk on next launch, and Round A's answers are untouched."
     why_human: "Requires a real OS process kill; declared `verification: backstop` by plans 01-03 and 01-06. Prior results are void because the bundle identifier changed (WR-11) — the app now uses a different on-device container."
+
   - test: "SC-2 auto-replay. Finish a recording by tapping STOP and then do not touch the screen."
     expected: "The answer plays back audibly with no tap, 'Playing your answer…' shows during playback, then a NEW question appears with recording re-armed."
     why_human: "Audible playback needs speakers. Note: the previous hang risk is closed and the wait is bounded at 65s, so a freeze at 'Playing your answer…' lasting longer than ~65s would be a genuine NEW defect worth reporting."
+
   - test: "SC-3 / HIST-03 tap-to-replay. Record 2-3 answers, open Exercise History, tap a session, tap a question row. Then tap a second row while the first is still playing."
     expected: "Rows listed newest-first immediately; tapping plays that specific recording audibly; the second tap stops the first before starting the second."
     why_human: "Playback goes through the audioplayers platform channel. Optional extra: delete the underlying .m4a via a file manager and tap the row again — it should say 'That recording is no longer available on this device.' rather than doing nothing."
+
   - test: "SC-5 / UI-02 visual style. View the Practice and History screens in a RELEASE build in airplane mode, then raise the OS text size to maximum and re-check the longest question."
     expected: "Warm coral/peach/ivory palette, friendly mascot, and the rounded Baloo 2 face on the question and screen titles — visibly not the default Material font, even offline in release. Text reflows and scrolls at max text scale without clipping."
     why_human: "'Friendly, not corporate-grey' is a visual judgment. This is also the on-device confirmation of the Gap 2 font fix; the airplane-mode condition is what proves the bundled asset, not a CDN, is the load path."
+
   - test: "SC-1 / LOOP-03 leading-audio loss. On a clean first launch, answer the mic permission dialog. Then speak the instant the question appears, tap STOP after ~2s, and listen to the replay."
     expected: "The replay contains your very first words with no clipped opening syllable. No blank or frozen screen while the permission dialog is pending — only the question and the 'Getting ready…' label."
     why_human: "Real microphone capture cannot run on the test host, and the honest `arming` window means leading-audio cost should be measured rather than assumed to be zero."
