@@ -137,32 +137,78 @@ CREATE TABLE $kQuestionAnswersTable (
 )''');
   }
 
-  /// Crash-safety-critical write path (D-08 / PERSIST-01).
+  /// The ONE crash-safety-critical write path (D-08 / PERSIST-01 / D-26).
   ///
-  /// Writes one `sessions` row and its one `question_answers` row inside a
-  /// SINGLE transaction, so a kill mid-write can never leave a session without
-  /// its answer (or an answer without its session).
+  /// Appends one answer to a session, creating that session lazily when
+  /// [sessionId] is null. Returns the session id the answer landed in, which the
+  /// caller carries into its next call.
+  ///
+  /// The `sessions` row is created by the FIRST answer and never before, so a
+  /// session the user abandons before answering anything writes nothing at all —
+  /// History never shows an empty session.
+  ///
+  /// Each call is its OWN transaction, so durability holds per QUESTION rather
+  /// than per session: a force-kill at question 7 of 10 leaves exactly 6
+  /// committed answers under exactly one session, with no partial seventh. A
+  /// single session-long transaction would instead lose all six.
   ///
   /// MUST only ever be called AFTER the audio file is confirmed finalized on
-  /// disk — never before, and never as two independent writes.
-  ///
-  /// Returns the new session's id.
-  Future<int> insertAnsweredSession({
+  /// disk — never before, and never as two independent writes. A [sessionId]
+  /// naming a row that does not exist fails loudly rather than writing an
+  /// orphaned answer, because `PRAGMA foreign_keys = ON` runs on every open.
+  Future<int> appendAnswer({
+    int? sessionId,
     required String questionText,
     required String audioRelativePath,
   }) async {
     final db = await database;
     final now = DateTime.now().toIso8601String();
     return db.transaction<int>((txn) async {
-      final sessionId = await txn.insert(kSessionsTable, {'created_at': now});
+      final id =
+          sessionId ?? await txn.insert(kSessionsTable, {'created_at': now});
       await txn.insert(kQuestionAnswersTable, {
-        'session_id': sessionId,
+        'session_id': id,
         'question_text': questionText,
         'audio_path': audioRelativePath,
         'created_at': now,
       });
-      return sessionId;
+      return id;
     });
+  }
+
+  /// A named alias for [appendAnswer]'s lazy-creation branch: one new session
+  /// holding one answer, which is what Phase 1's loop always wrote.
+  ///
+  /// It MUST stay a one-line delegation and must never grow a transaction of
+  /// its own. There is exactly one writer of the crash-safety invariant, and a
+  /// second one here would be free to drift out of step with it.
+  ///
+  /// Returns the new session's id.
+  Future<int> insertAnsweredSession({
+    required String questionText,
+    required String audioRelativePath,
+  }) =>
+      appendAnswer(
+        sessionId: null,
+        questionText: questionText,
+        audioRelativePath: audioRelativePath,
+      );
+
+  /// The session with [id], or null when no such row exists.
+  ///
+  /// Read-only, and scoped by a parameterised `where` like every other query
+  /// here. Exists so the completion state (D-27) can hand the real [Session] to
+  /// the detail screen rather than re-listing every session to find one.
+  Future<Session?> findSession(int id) async {
+    final db = await database;
+    final rows = await db.query(
+      kSessionsTable,
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return Session.fromMap(rows.first);
   }
 
   /// Every saved session, most recent first (HIST-01).

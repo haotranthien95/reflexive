@@ -73,6 +73,105 @@ void main() {
     });
   });
 
+  // The ONE crash-safety-critical write path (D-26). `insertAnsweredSession`
+  // above is now a named alias for its `sessionId: null` branch, so the tests
+  // in that group double as the regression proof that the delegation preserved
+  // Phase 1 behaviour exactly.
+  group('appendAnswer', () {
+    test('a null sessionId creates the session and its first answer together',
+        () async {
+      final sessionId = await helper.appendAnswer(
+        sessionId: null,
+        questionText: 'What did you do this morning?',
+        audioRelativePath: 'recordings/1.m4a',
+      );
+
+      expect(sessionId, greaterThan(0));
+
+      final db = await helper.database;
+      expect(await db.query(DatabaseHelper.kSessionsTable), hasLength(1));
+      final answers = await helper.listAnswersForSession(sessionId);
+      expect(answers, hasLength(1));
+      expect(answers.single.questionText, 'What did you do this morning?');
+      expect(answers.single.audioPath, 'recordings/1.m4a');
+    });
+
+    test('an existing sessionId appends to that same session', () async {
+      final sessionId = await helper.appendAnswer(
+        sessionId: null,
+        questionText: 'Question one',
+        audioRelativePath: 'recordings/1.m4a',
+      );
+      final again = await helper.appendAnswer(
+        sessionId: sessionId,
+        questionText: 'Question two',
+        audioRelativePath: 'recordings/2.m4a',
+      );
+
+      expect(again, sessionId, reason: 'appending must not open a new session');
+      expect(await helper.listSessions(), hasLength(1));
+      expect(await helper.listAnswersForSession(sessionId), hasLength(2));
+    });
+
+    test('N answers round-trip under one session, in insertion order',
+        () async {
+      int? sessionId;
+      for (var i = 1; i <= 5; i++) {
+        sessionId = await helper.appendAnswer(
+          sessionId: sessionId,
+          questionText: 'Question $i',
+          audioRelativePath: 'recordings/$i.m4a',
+        );
+      }
+
+      expect(await helper.listSessions(), hasLength(1));
+      final answers = await helper.listAnswersForSession(sessionId!);
+      expect(answers, hasLength(5));
+      expect(
+        answers.map((answer) => answer.questionText),
+        ['Question 1', 'Question 2', 'Question 3', 'Question 4', 'Question 5'],
+      );
+    });
+
+    test('a process kill after answer k leaves exactly k committed answers',
+        () async {
+      // Durability holds per QUESTION, not per session: each call is its own
+      // transaction, so whatever was committed before the kill survives it and
+      // nothing half-written does.
+      int? sessionId;
+      for (var i = 1; i <= 3; i++) {
+        sessionId = await helper.appendAnswer(
+          sessionId: sessionId,
+          questionText: 'Question $i',
+          audioRelativePath: 'recordings/$i.m4a',
+        );
+      }
+
+      // The simulated kill: drop the connection, reopen against the same
+      // on-disk database.
+      await helper.close();
+      helper = DatabaseHelper();
+
+      expect(await helper.listSessions(), hasLength(1));
+      expect(await helper.listAnswersForSession(sessionId!), hasLength(3));
+    });
+
+    test('a sessionId naming no row throws rather than writing an orphan',
+        () async {
+      await expectLater(
+        helper.appendAnswer(
+          sessionId: 9999,
+          questionText: 'Orphan',
+          audioRelativePath: 'recordings/orphan.m4a',
+        ),
+        throwsA(isA<DatabaseException>()),
+      );
+
+      final db = await helper.database;
+      expect(await db.query(DatabaseHelper.kQuestionAnswersTable), isEmpty);
+    });
+  });
+
   group('listSessions', () {
     test('returns nothing when no answer has been recorded', () async {
       expect(await helper.listSessions(), isEmpty);

@@ -2,7 +2,15 @@ import 'dart:async';
 
 import 'package:record/record.dart';
 
-/// Hard cap on a single recording (D-09). Configurable `d` arrives in Phase 2.
+import '../utils/pausable_countdown.dart';
+
+/// DEFAULT cap on a single recording, and no longer the app's real one.
+///
+/// Phase 2 makes the cap configurable per session (`d`, SETUP-05/D-21) and
+/// passes it as [RecordingService.start]'s `maxDuration`. This constant survives
+/// as the fallback for a caller that supplies none — which is what keeps every
+/// Phase 1 deadline test meaningful and unchanged. Do NOT reintroduce it as a
+/// ceiling over `d`: `d` ranges to 120 s and is the user's choice.
 const Duration kMaxRecordingDuration = Duration(seconds: 60);
 
 /// Thrown by [RecordingService.start] when the OS has not granted microphone
@@ -76,6 +84,13 @@ class _RecordPackageBackend implements RecorderBackend {
 ///    torn-down screen can never leave a live recorder or an armed deadline
 ///    behind it.
 ///
+/// **The deadline and the on-screen remaining-seconds readout are the SAME
+/// object** (D-21). `start`'s `onTick` is fed by the very [PausableCountdown]
+/// that will fire the auto-stop, so the number the user paces their answer
+/// against cannot disagree with the moment the recording actually ends. Deriving
+/// the readout from a second clock is exactly how a "3 seconds left" display
+/// ends up cutting someone off at 5.
+///
 /// The backend is resolved lazily so a test that injects a fake never
 /// constructs a platform channel.
 class RecordingService {
@@ -85,7 +100,9 @@ class RecordingService {
   late final RecorderBackend _backend =
       _injectedBackend ?? _RecordPackageBackend();
 
-  Timer? _autoStopTimer;
+  /// The `d` deadline AND the source of the remaining-seconds readout. Exactly
+  /// one is alive at a time; it is cancelled and nulled before any re-arm.
+  PausableCountdown? _deadline;
 
   /// True only between a COMPLETED start and the stop that finalizes it.
   bool _recording = false;
@@ -130,13 +147,22 @@ class RecordingService {
   /// given and then commit a row naming a file that does not exist — the exact
   /// durable-stale-path failure this phase's crash-safety contract excludes.
   ///
-  /// [onAutoStop] is invoked when the 60 s deadline elapses while still
-  /// recording. The callback owns the stop (it calls [stop] itself) so the
-  /// finalized path is delivered to exactly one consumer. If no callback is
-  /// supplied the deadline stops the recorder directly as a safety net.
+  /// [onAutoStop] is invoked when the deadline elapses while still recording.
+  /// The callback owns the stop (it calls [stop] itself) so the finalized path
+  /// is delivered to exactly one consumer. If no callback is supplied the
+  /// deadline stops the recorder directly as a safety net.
+  ///
+  /// [maxDuration] is the session's configured `d` (SETUP-05). When null the
+  /// deadline falls back to [kMaxRecordingDuration], which is what keeps every
+  /// Phase 1 caller and every Phase 1 deadline test correct unchanged.
+  ///
+  /// [onTick] receives the NEW remaining whole second after every tick, from the
+  /// same countdown that owns the deadline (D-21).
   Future<void> start(
     String absoluteFilePath, {
     void Function()? onAutoStop,
+    Duration? maxDuration,
+    void Function(int remainingSeconds)? onTick,
   }) async {
     if (_disposed) {
       throw StateError('RecordingService.start() called after dispose()');
@@ -182,16 +208,20 @@ class RecordingService {
     }
 
     _recording = true;
-    _autoStopTimer?.cancel();
-    _autoStopTimer = Timer(kMaxRecordingDuration, () {
-      _autoStopTimer = null;
-      if (!_recording) return;
-      if (onAutoStop != null) {
-        onAutoStop();
-      } else {
-        unawaited(stop());
-      }
-    });
+    _deadline?.cancel();
+    _deadline = PausableCountdown(
+      seconds: (maxDuration ?? kMaxRecordingDuration).inSeconds,
+      onTick: (remainingSeconds) => onTick?.call(remainingSeconds),
+      onElapsed: () {
+        _deadline = null;
+        if (!_recording) return;
+        if (onAutoStop != null) {
+          onAutoStop();
+        } else {
+          unawaited(stop());
+        }
+      },
+    )..start();
   }
 
   /// Stops the current recording and returns the finalized absolute file path.
@@ -206,8 +236,8 @@ class RecordingService {
     }
     if (!_recording) return null;
     _recording = false;
-    _autoStopTimer?.cancel();
-    _autoStopTimer = null;
+    _deadline?.cancel();
+    _deadline = null;
     return _backend.stop();
   }
 
@@ -223,8 +253,8 @@ class RecordingService {
   /// STRENGTHEN a pending stop, never erase it.
   Future<void> dispose() async {
     _disposed = true;
-    _autoStopTimer?.cancel();
-    _autoStopTimer = null;
+    _deadline?.cancel();
+    _deadline = null;
     _recording = false;
     await _backend.dispose();
   }
