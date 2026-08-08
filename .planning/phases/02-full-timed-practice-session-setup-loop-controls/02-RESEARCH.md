@@ -1435,9 +1435,17 @@ testWidgets('backgrounding mid-recording commits the answer and parks paused',
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> All four were resolved during Phase 2 planning (2026-08-08). Each recommendation below was
+> adopted; the `RESOLVED:` line on each question names the plan that owns the implementation.
+> Nothing in this section is still open.
 
 1. **The N = 0 Stop-confirmation dialog body (UI-SPEC E11, ⚠ unresolved).**
+   - **RESOLVED: adopted as recommended — owned by `02-05-PLAN.md`** (Task 1 action + acceptance
+     criterion for the exact string; recorded as flagged assumption #2 in that plan and authored as
+     the `E11/empty` and `E11/zero-one-many` truths). Still carried to UAT for user confirmation,
+     as a copy decision rather than an architectural one.
    - What we know: the Copywriting Contract locks bodies for N ≥ 2 and N = 1; Stop is enabled in every
      phase, including before the first answer commits; on confirm with 0 answers the app pops straight
      to Setup and nothing was written (D-26).
@@ -1447,6 +1455,9 @@ testWidgets('backgrounding mid-recording commits the answer and parks paused',
      for user confirmation but do not block planning on it.
 
 2. **The `d` auto-stop landing in the same frame as a Pause tap (UI-SPEC carried-forward race, ⚠ unresolved).**
+   - **RESOLVED: adopted as recommended — owned by `02-04-PLAN.md`** (Task 2 implements the deferred
+     `_pendingPauseRequest`; Task 3 makes it an explicit test case; recorded as flagged assumption #2
+     and as a `must_haves` truth in that plan).
    - What we know: Phase 1 already established "first signal wins, second is a no-op" for the
      manual-Stop vs auto-stop race, and proved it (`test/services/recording_service_test.dart:90-105`).
    - What's unclear: whether the losing Pause request should be dropped or deferred.
@@ -1456,6 +1467,9 @@ testWidgets('backgrounding mid-recording commits the answer and parks paused',
      inherited convention.
 
 3. **Whether the interruption handler should skip the auto-replay entirely.**
+   - **RESOLVED: skip, as recommended — owned by `02-05-PLAN.md`** (Task 2 suppresses the replay on
+     the interruption path; `02-02-PLAN.md` flagged assumption #2 requires the replay gate to be
+     written so 02-05 can suppress it without restructuring the post-commit tail).
    - What we know: D-31 says "finalized and saved first … and the session parks in the paused state."
      UI-SPEC's paused banner variant says *"your answer was saved when the app was interrupted."*
    - What's unclear: with `r = true`, should the replay be skipped outright, or queued for after Resume?
@@ -1465,6 +1479,10 @@ testWidgets('backgrounding mid-recording commits the answer and parks paused',
 
 4. **`PracticeState` extension vs. a session-scoped sibling `ChangeNotifier`** (explicitly listed under
    CONTEXT.md's Claude's Discretion).
+   - **RESOLVED: extend, as recommended — owned by every plan in the phase.** No sibling notifier is
+     created anywhere in `02-01` … `02-05`; the loop, the pause pair and the interruption handler are
+     all methods on `PracticeState`, and the `stopRecording()` guard/ordering comments stay where the
+     existing tests point.
    - Recommendation: **extend**, so the guard/ordering comments in `stopRecording()` stay where the
      existing tests point. Splitting the class would move the crash-safety contract, which is the one
      thing the phase must not regress.
