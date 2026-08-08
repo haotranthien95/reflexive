@@ -71,6 +71,10 @@ class _RecordPackageBackend implements RecorderBackend {
 ///    set only after a completed start and cleared by the stop that finalizes
 ///    it, which is what makes the 60 s deadline (D-09) impossible to disarm
 ///    permanently and impossible to outlive.
+///  * **A disposed service is terminal.** [dispose] counts as a stop signal for
+///    a start that is still arming and makes every later [start] throw, so a
+///    torn-down screen can never leave a live recorder or an armed deadline
+///    behind it.
 ///
 /// The backend is resolved lazily so a test that injects a fake never
 /// constructs a platform channel.
@@ -92,6 +96,11 @@ class RecordingService {
 
   /// Set when a stop signal arrives during that arming window.
   bool _stopRequestedDuringStart = false;
+
+  /// Set by [dispose] and never cleared. A disposed service is TERMINAL: it can
+  /// never arm again, and a [start] still in flight when it is set treats the
+  /// disposal itself as a stop signal.
+  bool _disposed = false;
 
   Future<bool> hasPermission() => _backend.hasPermission();
 
@@ -129,6 +138,9 @@ class RecordingService {
     String absoluteFilePath, {
     void Function()? onAutoStop,
   }) async {
+    if (_disposed) {
+      throw StateError('RecordingService.start() called after dispose()');
+    }
     if (_recording || _startInFlight != null) {
       throw StateError(
         'RecordingService.start() called while a recording is already active '
@@ -147,7 +159,13 @@ class RecordingService {
     }
 
     // Honour a stop that landed mid-arming BEFORE arming anything else.
-    if (_stopRequestedDuringStart) {
+    //
+    // A [dispose] counts as one of those stop signals in its own right.
+    // `PracticeScreen.dispose()` emits `stop().whenComplete(recorder.dispose)`,
+    // so on a teardown during the arming window the dispose lands one microtask
+    // after the stop — and a service that is being torn down must NEVER resolve
+    // into a live recorder with a 60 s deadline attached.
+    if (_stopRequestedDuringStart || _disposed) {
       _stopRequestedDuringStart = false;
       try {
         await _backend.stop();
@@ -193,11 +211,21 @@ class RecordingService {
     return _backend.stop();
   }
 
+  /// Tears the recorder down. A disposed service is terminal: [start] throws
+  /// from then on, and a `start()` that is still arming finalizes and discards
+  /// instead of arming.
+  ///
+  /// Deliberately does NOT clear [_stopRequestedDuringStart]. Clearing it
+  /// destroyed a stop that had already been recorded during the arming window,
+  /// so the resolving `start()` skipped the finalize-and-discard and armed a
+  /// live recorder plus a 60 s deadline *after* teardown — the microphone left
+  /// capturing behind a screen that no longer exists (T-04-01). A dispose must
+  /// STRENGTHEN a pending stop, never erase it.
   Future<void> dispose() async {
+    _disposed = true;
     _autoStopTimer?.cancel();
     _autoStopTimer = null;
     _recording = false;
-    _stopRequestedDuringStart = false;
     await _backend.dispose();
   }
 }

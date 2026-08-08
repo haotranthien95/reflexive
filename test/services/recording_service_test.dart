@@ -236,6 +236,66 @@ void main() {
     await service.dispose();
   });
 
+  testWidgets('a dispose landing IN the arming window still finalizes and '
+      'discards — the microphone is never left live behind a torn-down screen',
+      (tester) async {
+    // REGRESSION GUARD (CR-01). `PracticeScreen.dispose()` emits literally
+    // `stop().catchError(...).whenComplete(recordingService.dispose)`, so on a
+    // cold-launch teardown the dispose lands ONE MICROTASK after a stop that
+    // was recorded as pending — while `start()` is still arming.
+    //
+    // A `dispose()` that cleared `_stopRequestedDuringStart` destroyed that
+    // recorded signal: the resolving `start()` then skipped the
+    // finalize-and-discard, armed a live recorder and a 60 s deadline AFTER
+    // teardown, and fired `onAutoStop` on a disposed state. That is the exact
+    // T-04-01 ghost capture the 01-04 plan declares structurally impossible.
+    await tester.pumpWidget(const SizedBox());
+    final backend = FakeRecorderBackend();
+    final gate = Completer<void>();
+    backend.startGate = gate;
+    final service = RecordingService(backend: backend);
+    var fired = 0;
+
+    final arming = service.start(_pathA, onAutoStop: () => fired++);
+    await tester.pump();
+
+    // The literal PracticeScreen.dispose() sequence.
+    unawaited(
+      service
+          .stop()
+          .catchError((Object _) => null)
+          .whenComplete(service.dispose),
+    );
+    await tester.pump();
+
+    gate.complete();
+    await arming;
+
+    // The recording that finished arming was finalized, not armed.
+    expect(backend.stopCount, 1,
+        reason: 'a disposed service must never leave the recorder running');
+
+    // And no deadline outlived the teardown.
+    await tester.pump(kMaxRecordingDuration + const Duration(seconds: 1));
+    expect(fired, 0,
+        reason: 'a 60 s deadline was armed after dispose() returned');
+  });
+
+  testWidgets('start() after dispose() throws instead of driving a disposed '
+      'backend', (tester) async {
+    await tester.pumpWidget(const SizedBox());
+    final backend = FakeRecorderBackend();
+    final service = RecordingService(backend: backend);
+
+    await service.dispose();
+
+    await expectLater(
+      service.start(_pathA),
+      throwsA(isA<StateError>()),
+    );
+    expect(backend.backendWasStarted, isFalse);
+  });
+
   testWidgets('dispose cancels a pending deadline', (tester) async {
     await tester.pumpWidget(const SizedBox());
     final backend = FakeRecorderBackend();
