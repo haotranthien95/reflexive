@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:englishreflex/db/database_helper.dart';
@@ -6,19 +7,30 @@ import 'package:englishreflex/services/recording_service.dart';
 import 'package:englishreflex/state/practice_state.dart';
 import 'package:englishreflex/utils/audio_paths.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// Records start/stop calls without touching any platform channel. The real
-/// [RecordingService] creates its `AudioRecorder` lazily, so overriding both
-/// methods here means no plugin is ever constructed.
+/// [RecordingService] creates its backend lazily, so overriding these methods
+/// here means no plugin is ever constructed.
 class FakeRecordingService extends RecordingService {
   FakeRecordingService(this.calls);
 
   final List<String> calls;
   String? lastRequestedPath;
 
+  /// The auto-stop callback the state handed over on the last `start()`.
+  void Function()? lastAutoStop;
+
+  /// Held open to keep `start()` in flight, so a test can observe the arming
+  /// window the way the real recorder's permission + start awaits produce it.
+  Completer<void>? startGate;
+
   /// Set to true to simulate a second stop signal losing the race.
   bool stopReturnsNull = false;
+
+  /// Set to true to simulate the recorder itself blowing up on stop.
+  bool throwOnStop = false;
 
   /// Set to true to simulate the OS refusing microphone access.
   bool throwPermissionDenied = false;
@@ -30,12 +42,16 @@ class FakeRecordingService extends RecordingService {
       throw const RecordingPermissionDeniedException();
     }
     lastRequestedPath = absoluteFilePath;
+    lastAutoStop = onAutoStop;
     calls.add('start');
+    final gate = startGate;
+    if (gate != null) await gate.future;
   }
 
   @override
   Future<String?> stop() async {
     calls.add('stop');
+    if (throwOnStop) throw StateError('the recorder failed to finalize');
     if (stopReturnsNull) return null;
     return lastRequestedPath ?? '/fake/recordings/fake.m4a';
   }
@@ -55,9 +71,13 @@ class FakeAudioPlayerService extends AudioPlayerService {
 
   int? sessionsAtFirstPlay;
 
+  /// Set to true to simulate the player failing on an already-saved answer.
+  bool throwOnPlay = false;
+
   @override
   Future<void> play(String absoluteFilePath, {bool awaitCompletion = false}) async {
     calls.add('play');
+    if (throwOnPlay) throw StateError('playback failed');
     sessionsAtFirstPlay ??= (await databaseHelper.listSessions()).length;
   }
 
@@ -88,6 +108,14 @@ void main() {
   late FakeAudioPlayerService audioPlayerService;
   late PracticeState state;
 
+  /// Yields to the event loop until [condition] holds (or we give up), so a
+  /// test can observe a state that only exists between two real async awaits.
+  Future<void> pumpUntil(bool Function() condition) async {
+    for (var i = 0; i < 200 && !condition(); i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+
   setUpAll(() {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
@@ -116,6 +144,13 @@ void main() {
     }
   });
 
+  test('a freshly constructed PracticeState is arming, not idle', () {
+    // The cold-launch window (orphan sweep, then the first start) must not
+    // flash a recovery control before anything has gone wrong.
+    expect(state.phase, PracticePhase.arming);
+    expect(calls, isEmpty);
+  });
+
   test('startNewQuestion begins recording immediately, with no user action',
       () async {
     await state.startNewQuestion();
@@ -124,6 +159,25 @@ void main() {
     expect(calls, ['start']);
     expect(recordingService.lastRequestedPath, isNotNull);
     expect(recordingService.lastRequestedPath, endsWith('.m4a'));
+  });
+
+  test('the phase stays arming until the recorder has actually started',
+      () async {
+    final gate = Completer<void>();
+    recordingService.startGate = gate;
+
+    final started = state.startNewQuestion();
+    await pumpUntil(() => calls.contains('start'));
+
+    // Both halves matter: `arming` is also the constructor's initial phase, so
+    // the phase alone would pass even if nothing had been issued.
+    expect(calls, contains('start'));
+    expect(state.phase, PracticePhase.arming);
+
+    gate.complete();
+    await started;
+
+    expect(state.phase, PracticePhase.recording);
   });
 
   test('stopRecording saves BEFORE replaying, then resets and re-arms',
@@ -149,7 +203,8 @@ void main() {
     expect(state.phase, PracticePhase.recording);
   });
 
-  test('a losing stop signal writes nothing — first stop wins', () async {
+  test('a losing stop signal is surfaced as a recoverable failure and writes '
+      'nothing', () async {
     await state.startNewQuestion();
     recordingService.stopReturnsNull = true;
 
@@ -157,7 +212,9 @@ void main() {
 
     expect(calls, ['start', 'stop']);
     expect(await databaseHelper.listSessions(), isEmpty);
-    expect(state.phase, PracticePhase.idle);
+    // Deliberately NOT `idle`: every reachable route to a null finalized path
+    // is a recorder-level failure, and only the error phase carries a Retry.
+    expect(state.phase, PracticePhase.error);
   });
 
   test('stopRecording is a no-op when nothing is recording', () async {
@@ -179,6 +236,17 @@ void main() {
       expect(await databaseHelper.listAnswersForSession(session.id!),
           hasLength(1));
     }
+  });
+
+  test('two recordings started in the same millisecond do not collide',
+      () async {
+    await state.startNewQuestion();
+    final firstPath = recordingService.lastRequestedPath;
+    await state.stopRecording();
+    final secondPath = recordingService.lastRequestedPath;
+
+    // The millisecond half of the name can repeat; the entropy suffix cannot.
+    expect(secondPath, isNot(firstPath));
   });
 
   group('error handling', () {
@@ -216,6 +284,31 @@ void main() {
       expect(calls, ['start-denied', 'start']);
     });
 
+    test('a recorder that throws on stop lands in error, never in saving',
+        () async {
+      await state.startNewQuestion();
+      recordingService.throwOnStop = true;
+
+      await state.stopRecording();
+
+      expect(state.phase, PracticePhase.error);
+      expect(await databaseHelper.listSessions(), isEmpty);
+    });
+
+    test('a replay failure never blocks the loop — the answer is already saved',
+        () async {
+      await state.startNewQuestion();
+      audioPlayerService.throwOnPlay = true;
+
+      await state.stopRecording();
+
+      expect(
+        state.phase,
+        anyOf(PracticePhase.recording, PracticePhase.arming),
+      );
+      expect(await databaseHelper.listSessions(), hasLength(1));
+    });
+
     test('a save failure shows the same copy and does NOT auto-restart '
         'recording', () async {
       final failingHelper = FailingDatabaseHelper();
@@ -239,6 +332,80 @@ void main() {
       expect(calls, ['start', 'stop']);
       // The real (non-failing) database is untouched.
       expect(await databaseHelper.listSessions(), isEmpty);
+    });
+
+    test('every injected failure leaves the loop in a recoverable phase',
+        () async {
+      const recoverable = <PracticePhase>{
+        PracticePhase.error,
+        PracticePhase.recording,
+        PracticePhase.arming,
+      };
+
+      // 1. The microphone is denied.
+      recordingService.throwPermissionDenied = true;
+      await state.startNewQuestion();
+      expect(recoverable, contains(state.phase));
+
+      // 2. The stop finalizes nothing.
+      recordingService.throwPermissionDenied = false;
+      await state.retry();
+      recordingService.stopReturnsNull = true;
+      await state.stopRecording();
+      expect(recoverable, contains(state.phase));
+
+      // 3. The recorder throws on stop.
+      recordingService.stopReturnsNull = false;
+      await state.retry();
+      recordingService.throwOnStop = true;
+      await state.stopRecording();
+      expect(recoverable, contains(state.phase));
+
+      // 4. Playback throws on an already-committed answer.
+      recordingService.throwOnStop = false;
+      await state.retry();
+      audioPlayerService.throwOnPlay = true;
+      await state.stopRecording();
+      expect(recoverable, contains(state.phase));
+    });
+  });
+
+  group('re-entrancy and the auto-stop backstop', () {
+    test('the auto-stop deadline still stops the recorder when the loop has '
+        'already left the recording phase', () async {
+      await state.startNewQuestion();
+      final autoStop = recordingService.lastAutoStop;
+      expect(autoStop, isNotNull);
+
+      // Drive the loop out of `recording` the way a losing stop does.
+      recordingService.stopReturnsNull = true;
+      await state.stopRecording();
+      expect(state.phase, PracticePhase.error);
+
+      calls.clear();
+      autoStop!();
+      await pumpUntil(() => calls.contains('stop'));
+
+      // An armed recorder must never be left running past the 60 s cap (D-09).
+      expect(calls, contains('stop'));
+    });
+
+    test('two overlapping startNewQuestion calls produce exactly one recorder '
+        'start, and the saved path is the one the recorder was given', () async {
+      final first = state.startNewQuestion();
+      final second = state.startNewQuestion();
+      await Future.wait<void>([first, second]);
+
+      expect(calls.where((c) => c == 'start').length, 1);
+
+      final requestedPath = recordingService.lastRequestedPath!;
+      await state.stopRecording();
+
+      final sessions = await databaseHelper.listSessions();
+      expect(sessions, hasLength(1));
+      final answers =
+          await databaseHelper.listAnswersForSession(sessions.single.id!);
+      expect(answers.single.audioPath, endsWith(p.basename(requestedPath)));
     });
   });
 }
