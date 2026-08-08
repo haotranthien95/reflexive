@@ -14,6 +14,7 @@ import 'package:englishreflex/utils/audio_paths.dart';
 import 'package:englishreflex/widgets/phase_control.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// A recorder that touches no platform channel, so the REAL loop — its
 /// countdowns, its phase transitions, its write ordering — runs on the host.
@@ -331,9 +332,10 @@ void main() {
     await tester.tap(startButton);
     await tester.pump();
     // Half a second: long enough for the push transition to finish, short
-    // enough that the get-ready countdown has not ticked yet. Deliberately NOT
-    // `pumpAndSettle()` — a `Timer.periodic` keeps scheduling frames, so a
-    // countdown phase never settles and that call would run to its timeout.
+    // enough that the get-ready countdown has not ticked yet. Every pump in
+    // this file carries an EXPLICIT duration, and none waits for the tree to go
+    // idle — a `Timer.periodic` keeps scheduling frames, so a countdown phase
+    // never reaches idle and a settle-until-idle pump would run to its timeout.
     await tester.pump(const Duration(milliseconds: 500));
 
     // LOOP-01: the session opens on the 3·2·1, question card hidden (D-22).
@@ -733,6 +735,110 @@ void main() {
     expect(state.phase, PracticePhase.complete);
 
     state.dispose();
+  });
+
+  testWidgets('a realistic session length and a session longer than the bank '
+      'both complete', (tester) async {
+    // The two lengths a user actually configures against the 20-prompt
+    // placeholder bank: one comfortably inside it, one that has to wrap.
+    for (final int count in <int>[10, 25]) {
+      final helper = InMemoryDatabaseHelper();
+      final state = newState(
+        config: configFor(questionCount: count),
+        helper: helper,
+      );
+
+      await state.startSession();
+      for (var i = 0; i < count; i++) {
+        await answerOneQuestion(tester, state);
+      }
+
+      expect(state.phase, PracticePhase.complete, reason: 'count=$count');
+      expect(state.answeredCount, count, reason: 'count=$count');
+
+      final sessions = await helper.listSessions();
+      expect(sessions, hasLength(1), reason: 'count=$count');
+      final answers =
+          await helper.listAnswersForSession(sessions.single.id!);
+      expect(answers, hasLength(count), reason: 'count=$count');
+      expect(
+        answers.map((a) => a.questionText).toList(),
+        List<String>.generate(count, (i) => questionAt(kQuestions, i)),
+        reason: 'sequential bank order, wrapping rather than capping (D-23)',
+      );
+
+      state.dispose();
+    }
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // PERSIST-01 across N, against REAL SQLite.
+  //
+  // A plain `test()`, deliberately: `sqflite_common_ffi`'s futures are completed
+  // by the real event loop, which the fake clock inside a `testWidgets` body
+  // never yields to (see the note on [InMemoryDatabaseHelper]). Dropping the
+  // fake clock costs this case the countdowns — so it drives the loop through
+  // `startNewQuestion()`/`stopRecording()` directly, which is the same pair the
+  // countdowns call and the only pair that touches the database.
+  // ───────────────────────────────────────────────────────────────────────────
+  group('durability across N answers', () {
+    setUpAll(() {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+    });
+
+    test('a session abandoned at question 4 of 10 leaves exactly 3 committed '
+        'answers under exactly one session row', () async {
+      final helper = DatabaseHelper();
+      final state = PracticeState(
+        recordingService: recordingService,
+        audioPlayerService: FakeAudioPlayerService(calls),
+        databaseHelper: helper,
+        config: const SessionConfig(
+          topics: <String>['Daily life'],
+          level: 'B1',
+          questionCount: 10,
+          thinkingSeconds: 3,
+          answerSeconds: 10,
+          autoReplay: false,
+        ),
+      );
+
+      for (var i = 0; i < 3; i++) {
+        await state.startNewQuestion();
+        await state.stopRecording();
+      }
+
+      // Question 4 is armed and then abandoned — the force-stop shape. Nothing
+      // was finalized, so nothing may be committed for it.
+      await state.startNewQuestion();
+      state.dispose();
+
+      // The simulated process kill: close the handle and come back through a
+      // brand-new one against the same on-disk file.
+      await helper.close();
+      final reopened = DatabaseHelper();
+      addTearDown(reopened.close);
+
+      final sessions = await reopened.listSessions();
+      expect(
+        sessions,
+        hasLength(1),
+        reason: 'nine questions must not become nine session rows',
+      );
+      final answers = await reopened.listAnswersForSession(sessions.single.id!);
+      // Asserted on the ROW COUNT and the row ORDER, not on the loop's own
+      // counters: this case has to stay red if a future change ever brings back
+      // a one-answer-per-session assumption.
+      expect(answers, hasLength(3));
+      expect(
+        answers.map((a) => a.questionText).toList(),
+        kQuestions.take(3).toList(),
+      );
+      for (final answer in answers) {
+        expect(answer.audioPath, startsWith('$kRecordingsDirName/'));
+      }
+    });
   });
 }
 
