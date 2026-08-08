@@ -34,12 +34,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. Force-killing the app mid-use and relaunching still shows every already-recorded answer in history — nothing captured before the crash is lost.
   5. The recording and history screens use large, easily readable text and a simple, colorful, friendly visual style (not corporate/minimal-grey).
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans executed
 Plans:
 
 - [x] 01-01-PLAN.md — Walking Skeleton: scaffold, persistence, and the record→save→replay→history loop
 - [x] 01-02-PLAN.md — Visual & typography system (warm palette, Baloo 2, mascot)
-- [ ] 01-03-PLAN.md — Crash-safety hardening (error handling, FK enforcement, D-07 force-kill test)
+- [x] 01-03-PLAN.md — Crash-safety hardening (error handling, FK enforcement, D-07 force-kill test)
 
 **UI hint**: yes
 
@@ -96,7 +96,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Record, Save & Replay a Single Answer (Crash-Safe) | 2/3 | In Progress|  |
+| 1. Record, Save & Replay a Single Answer (Crash-Safe) | 3/3 | In Progress|  |
 | 2. Full Timed Practice Session (Setup, Loop & Controls) | 0/TBD | Not started | - |
 | 3. Real Question Bank via Firestore | 0/TBD | Not started | - |
 | 4. Bulk Import, Seed Content & Screen Polish | 0/TBD | Not started | - |
