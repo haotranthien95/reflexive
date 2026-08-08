@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../db/database_helper.dart';
@@ -6,6 +8,7 @@ import '../services/recording_service.dart';
 import '../state/practice_state.dart';
 import '../utils/audio_paths.dart';
 import '../widgets/mascot.dart';
+import '../widgets/phase_control.dart';
 import 'history_screen.dart';
 
 /// The single practice screen: a question appears and recording starts the
@@ -52,8 +55,17 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
   @override
   void dispose() {
-    _state.recordingService.dispose();
-    _state.audioPlayerService.dispose();
+    // Stop any in-flight recording BEFORE tearing the recorder down: leaving
+    // the screen must never leave the microphone live. The stop is fire-and-
+    // forget (dispose cannot await) but its failure is swallowed explicitly
+    // rather than surfacing as an unhandled async error.
+    unawaited(
+      _state.recordingService
+          .stop()
+          .catchError((Object _) => null)
+          .whenComplete(_state.recordingService.dispose),
+    );
+    unawaited(_state.audioPlayerService.dispose());
     _state.dispose();
     super.dispose();
   }
@@ -68,8 +80,6 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('EnglishReflex'),
@@ -123,14 +133,16 @@ class _PracticeScreenState extends State<PracticeScreen> {
                               const SizedBox(height: 32), // xl
                               _QuestionCard(question: _state.currentQuestion),
                               const SizedBox(height: 48), // 2xl
-                              if (_state.phase == PracticePhase.recording)
-                                _StopButton(onPressed: _state.stopRecording),
-                              if (_state.phase == PracticePhase.replaying)
-                                Text(
-                                  'Playing your answer…',
-                                  textAlign: TextAlign.center,
-                                  style: theme.textTheme.bodyLarge,
-                                ),
+                              // Every phase renders exactly one control here —
+                              // the mapping is total and exhaustively tested,
+                              // so no phase can leave this screen controlless.
+                              PhaseControl(
+                                phase: _state.phase,
+                                onStop: () =>
+                                    unawaited(_state.stopRecording()),
+                                onStart: () =>
+                                    unawaited(_state.startNewQuestion()),
+                              ),
                             ],
                           ),
                         ),
@@ -231,45 +243,6 @@ class _QuestionCard extends StatelessWidget {
         question,
         textAlign: TextAlign.center,
         style: theme.textTheme.displayLarge,
-      ),
-    );
-  }
-}
-
-/// The 96px circular Stop target — the single most important tap target on the
-/// screen, deliberately far above the 44px minimum (UI-SPEC spacing exception).
-class _StopButton extends StatelessWidget {
-  const _StopButton({required this.onPressed});
-
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return SizedBox(
-      width: 96,
-      height: 96,
-      child: FilledButton(
-        onPressed: onPressed,
-        style: FilledButton.styleFrom(
-          backgroundColor: theme.colorScheme.primary,
-          foregroundColor: theme.colorScheme.onPrimary,
-          shape: const CircleBorder(),
-          padding: EdgeInsets.zero,
-        ),
-        // Scales the label down rather than overflowing the fixed-size target
-        // at the largest OS text-scale setting.
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.stop_rounded, size: 28),
-              Text('STOP', style: theme.textTheme.labelLarge),
-            ],
-          ),
-        ),
       ),
     );
   }
