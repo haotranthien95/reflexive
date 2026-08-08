@@ -43,12 +43,14 @@ A simple, colorful Flutter mobile app for practicing spontaneous spoken English 
 | `dart:convert` (SDK, no package) | bundled | Parse imported JSON (`jsonDecode`) and encode/decode any structured local blobs | Always — this is a Dart SDK library, not a pub package. Do not add a third-party JSON package for this; the app's JSON shape is trivial (`{"data": [...]}`). |
 | `dart:io` (SDK, no package) | bundled | Read the picked JSON file (`File(path).readAsString()`), write/delete audio files | Always — SDK library. No package needed for basic file I/O. |
 | Flutter `ChangeNotifier` / `ValueNotifier` + `ListenableBuilder` (Flutter SDK, no package) | bundled | Share practice-loop engine state (countdown phase, pause/resume/stop, current question index) between the app bar actions and the practice screen body | Use this instead of any state-management package. It is built into `package:flutter/foundation.dart` and `package:flutter/widgets.dart` — zero added dependency, and this app has exactly one screen-flow (setup → practice loop → history) that needs cross-widget state sharing. |
+| `path` | ^1.9.0 | Join filesystem path segments (`join(dir.path, 'file.m4a')`) for the SQLite DB file and recorded audio files | Tiny Dart-team-maintained path-joining utility, required by sqflite's documented usage pattern; added in Phase 1. |
 | `cupertino_icons` (default Flutter template) | ^1.0.8 | Default icon set | Keep the stock default; do not add a second icon package (e.g. `flutter_icons`) for a small colorful/cartoon UI — Material icons + a couple of custom PNG/SVG mascot assets are enough. |
 
 ### Development Tools
 
 | Tool | Purpose | Notes |
 |------|---------|-------|
+| `sqflite_common_ffi` (dev_dependency, ^2.3.0) | Run `DatabaseHelper` against a real SQLite engine inside `flutter test` (no device/emulator) via `sqfliteFfiInit()` + `databaseFactory = databaseFactoryFfi` | Test-only; never shipped in the app binary. Added in Phase 1. |
 | FlutterFire CLI (`flutterfire configure`) | One-time generation of `firebase_options.dart` and per-platform Firebase config | Run once during project setup, not a runtime dependency. Requires a Firebase project created in the console first (Firestore in Native mode, no Auth product needed). |
 | Firestore Console — Security Rules | Restrict the `questions` collection to read/write without requiring Firebase Auth (since the app has no login) | Because there's no auth, rules must intentionally allow unauthenticated read (and write, for JSON import) on `questions` — document this as an accepted tradeoff of the "no backend beyond Firestore, no auth" constraint, not an oversight. |
 
