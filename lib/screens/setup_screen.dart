@@ -19,15 +19,26 @@ const int kDefaultThinkingSeconds = 5;
 const int kDefaultAnswerSeconds = 60;
 const bool kDefaultAutoReplay = true;
 
+/// The six CEFR levels (SETUP-02 / D-17) — a fixed, closed, single-select set.
+/// The row can never be empty and exactly one entry is always selected, so
+/// there is no "nothing chosen" state to design for.
+const List<String> kLevels = <String>['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+
 /// The app's home screen (D-28): configure a session, then start it.
 ///
-/// Plan 02-01 builds only the topic section and the gated START SESSION action —
-/// the level chips, the three sliders and the replay toggle land in plan 02-02
-/// and feed the same [SessionConfig]. Until then Start supplies the defaults
-/// above, so the config travelling into a session is already the real shape.
+/// Owns all six configurable values — topics, level, question count, thinking
+/// time `t`, answer length `d` and auto-replay `r` — and packs them into one
+/// immutable [SessionConfig] when START SESSION fires.
 ///
-/// **Local state only** (D-18): nothing here is written to the database, so this
-/// screen adds no persistence surface and no schema version bump.
+/// **Local state only, deliberately forgetful** (D-18): every field below is a
+/// plain [State] field. Nothing is written to `SharedPreferences`, to the
+/// database, or to a file, so this screen adds no persistence surface and no
+/// schema version bump. The alternative — a one-row `settings` table remembering
+/// the last-used configuration between sessions — was considered and DEFERRED:
+/// it buys a returning user a few taps at the cost of a new schema, a migration
+/// path and a "reset to defaults" affordance, none of which a drill tool with
+/// five settings has earned yet. Every visit therefore starts from the constants
+/// above, which is also why there is no reset button: there is nothing to reset.
 ///
 /// The services are optional constructor parameters for the same reason
 /// `HistoryScreen` takes its [DatabaseHelper]: it is the seam a widget test
@@ -62,6 +73,12 @@ class _SetupScreenState extends State<SetupScreen> {
       widget.databaseHelper ?? DatabaseHelper();
 
   final Set<String> _selectedTopics = <String>{};
+
+  String _level = kDefaultLevel;
+  int _questionCount = kDefaultQuestionCount;
+  int _thinkingSeconds = kDefaultThinkingSeconds;
+  int _answerSeconds = kDefaultAnswerSeconds;
+  bool _autoReplay = kDefaultAutoReplay;
 
   List<String> get _subjects => widget.subjects ?? kSubjects;
 
@@ -113,11 +130,11 @@ class _SetupScreenState extends State<SetupScreen> {
       topics: List<String>.unmodifiable(
         _subjects.where(_selectedTopics.contains),
       ),
-      level: kDefaultLevel,
-      questionCount: kDefaultQuestionCount,
-      thinkingSeconds: kDefaultThinkingSeconds,
-      answerSeconds: kDefaultAnswerSeconds,
-      autoReplay: kDefaultAutoReplay,
+      level: _level,
+      questionCount: _questionCount,
+      thinkingSeconds: _thinkingSeconds,
+      answerSeconds: _answerSeconds,
+      autoReplay: _autoReplay,
     );
 
     Navigator.of(context).push(
@@ -169,6 +186,68 @@ class _SetupScreenState extends State<SetupScreen> {
                       subjects: _subjects,
                       selected: _selectedTopics,
                       onChanged: _toggleTopic,
+                    ),
+                    const SizedBox(height: 32), // xl — between Setup sections
+                    // The chip row sits directly on the ivory background, NOT
+                    // inside a peach card: unselected chips are peach, and
+                    // peach on peach would make them vanish.
+                    _LevelChips(
+                      selected: _level,
+                      onSelected: (level) => setState(() => _level = level),
+                    ),
+                    const SizedBox(height: 32), // xl
+                    _SettingSlider(
+                      keyPrefix: 'setup-count',
+                      label: 'Questions',
+                      // No helper line — "Questions" over a bare numeral needs
+                      // no explanation, and the bare numeral also sidesteps the
+                      // singular/plural problem entirely.
+                      readout: '$_questionCount',
+                      value: _questionCount.toDouble(),
+                      min: 1,
+                      max: 100,
+                      divisions: 99,
+                      semanticFormatter: (value) =>
+                          '${value.round()} questions',
+                      onChanged: (value) =>
+                          setState(() => _questionCount = value.round()),
+                    ),
+                    const SizedBox(height: 32), // xl
+                    _SettingSlider(
+                      keyPrefix: 'setup-thinking',
+                      label: 'Thinking time',
+                      helper:
+                          'How long you get to read the question before recording starts.',
+                      readout: '$_thinkingSeconds sec',
+                      value: _thinkingSeconds.toDouble(),
+                      min: 3,
+                      max: 30,
+                      divisions: 27,
+                      semanticFormatter: (value) =>
+                          '${value.round()} seconds thinking time',
+                      onChanged: (value) =>
+                          setState(() => _thinkingSeconds = value.round()),
+                    ),
+                    const SizedBox(height: 32), // xl
+                    _SettingSlider(
+                      keyPrefix: 'setup-answer',
+                      label: 'Answer length',
+                      helper: 'Recording stops automatically after this long.',
+                      readout: '$_answerSeconds sec',
+                      value: _answerSeconds.toDouble(),
+                      min: 10,
+                      max: 120,
+                      divisions: 110,
+                      semanticFormatter: (value) =>
+                          '${value.round()} seconds answer length',
+                      onChanged: (value) =>
+                          setState(() => _answerSeconds = value.round()),
+                    ),
+                    const SizedBox(height: 32), // xl
+                    _ReplayToggle(
+                      value: _autoReplay,
+                      onChanged: (value) =>
+                          setState(() => _autoReplay = value),
                     ),
                   ],
                 ),
@@ -235,6 +314,169 @@ class _TopicsCard extends StatelessWidget {
                     ),
                 ],
               ),
+      ),
+    );
+  }
+}
+
+/// The CEFR level row (SETUP-02 / D-17): six single-select chips, B1 first.
+///
+/// Single-select is an invariant, not a validation rule — tapping the selected
+/// chip again is a no-op rather than a deselect, so exactly one level is always
+/// in force and the row can never reach an empty state.
+class _LevelChips extends StatelessWidget {
+  const _LevelChips({required this.selected, required this.onSelected});
+
+  final String selected;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Level', style: theme.textTheme.labelLarge),
+        const SizedBox(height: 8), // sm
+        Text(
+          "CEFR level of the questions you'll get.",
+          style: theme.textTheme.bodyLarge,
+        ),
+        const SizedBox(height: 8), // sm
+        Wrap(
+          key: const Key('setup-level-chips'),
+          spacing: 8, // sm
+          runSpacing: 8, // sm — wrapping to a second line at large text scale
+          // is the SPECIFIED behaviour here, not an overflow failure.
+          children: [
+            for (final level in kLevels)
+              ChoiceChip(
+                key: Key('setup-level-$level'),
+                label: Text(level, style: theme.textTheme.labelLarge),
+                selected: selected == level,
+                // The fill alone carries selection; a checkmark would shift the
+                // chip's width as selection moves and jitter the whole row.
+                showCheckmark: false,
+                backgroundColor: theme.colorScheme.surface, // peach
+                selectedColor: theme.colorScheme.primary, // coral
+                side: BorderSide.none,
+                onSelected: (isSelected) {
+                  if (isSelected) onSelected(level);
+                },
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// One numeric setting: section label, optional helper, a large centred readout
+/// and the slider that drives it.
+///
+/// The readout is always visible, which is why the slider carries no `label:`
+/// value-indicator popup — the popup would duplicate it and only while dragging.
+/// `min`/`max`/`divisions` make an out-of-range value unrepresentable, so there
+/// is no validation-error treatment anywhere on this screen: the constraint is
+/// enforced by the widget rather than announced by a message.
+class _SettingSlider extends StatelessWidget {
+  const _SettingSlider({
+    required this.keyPrefix,
+    required this.label,
+    required this.readout,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.semanticFormatter,
+    required this.onChanged,
+    this.helper,
+  });
+
+  final String keyPrefix;
+  final String label;
+  final String? helper;
+  final String readout;
+  final double value;
+  final double min;
+  final double max;
+  final int divisions;
+
+  /// Gives a screen reader "10 questions" rather than a bare "10".
+  final String Function(double value) semanticFormatter;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(label, style: theme.textTheme.labelLarge),
+        const SizedBox(height: 8), // sm
+        if (helper != null) ...[
+          Text(helper!, style: theme.textTheme.bodyLarge),
+          const SizedBox(height: 8), // sm
+        ],
+        Text(
+          readout,
+          key: Key('$keyPrefix-readout'),
+          textAlign: TextAlign.center,
+          style: theme.textTheme.displayLarge,
+        ),
+        const SizedBox(height: 8), // sm
+        Slider(
+          key: Key('$keyPrefix-slider'),
+          value: value,
+          min: min,
+          max: max,
+          divisions: divisions,
+          activeColor: theme.colorScheme.primary, // coral
+          thumbColor: theme.colorScheme.primary,
+          inactiveColor: theme.colorScheme.surface, // peach
+          semanticFormatterCallback: semanticFormatter,
+          onChanged: onChanged,
+        ),
+      ],
+    );
+  }
+}
+
+/// The auto-replay switch (SETUP-06), ON by default so the loop the user
+/// already knows from Phase 1 (D-10) is what they get without touching anything.
+class _ReplayToggle extends StatelessWidget {
+  const _ReplayToggle({required this.value, required this.onChanged});
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return ConstrainedBox(
+      // Touch-target floor, not part of the 4px content scale. A constraint
+      // rather than a fixed height so the title and helper GROW the row at
+      // large text scale instead of clipping.
+      constraints: const BoxConstraints(minHeight: 64),
+      child: SwitchListTile(
+        key: const Key('setup-replay'),
+        value: value,
+        onChanged: onChanged,
+        // Coral track with the brown `onPrimary` thumb: a coral thumb on a
+        // coral track would be invisible, and brown-on-coral is the same 4.7:1
+        // pairing every other coral control on the screen uses.
+        activeTrackColor: theme.colorScheme.primary,
+        activeThumbColor: theme.colorScheme.onPrimary,
+        // The screen padding already supplies the 24px horizontal inset.
+        contentPadding: EdgeInsets.zero,
+        title: Text('Play back my answers', style: theme.textTheme.labelLarge),
+        subtitle: Text(
+          'Hear each answer right after you record it.',
+          style: theme.textTheme.bodyLarge,
+        ),
       ),
     );
   }
