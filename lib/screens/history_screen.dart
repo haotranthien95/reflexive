@@ -5,6 +5,21 @@ import '../models/session.dart';
 import '../utils/date_format.dart';
 import 'session_detail_screen.dart';
 
+/// The single user-facing message for a failed read of saved history.
+///
+/// Written to the same rules as `kRecordingErrorMessage`: name the likely cause
+/// and the next action, blame nothing on the user, and leak no exception text,
+/// file path or SQL detail (T-06-04).
+///
+/// The second clause is the load-bearing one. This phase's entire promise is
+/// that nothing captured is ever lost, so a read failure must never be allowed
+/// to *read* as data loss — the recordings are still on disk, the app simply
+/// could not open them this time. Shared verbatim by the History list and the
+/// session detail screen so the app has one failure voice.
+const String kHistoryErrorMessage =
+    "Couldn't open your recordings — they're still saved on this device. "
+    'Try again.';
+
 /// Exercise History — every saved session, most recent first (HIST-01).
 ///
 /// Session-first by design (D-06): Phase 1 sessions happen to hold exactly one
@@ -25,6 +40,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
   @override
   void initState() {
     super.initState();
+    _load();
+  }
+
+  /// The one place the query is issued — used by [initState] and by retry, so
+  /// the two can never drift apart.
+  void _load() {
     _sessionsFuture = widget.databaseHelper.listSessions();
   }
 
@@ -44,6 +65,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
+          }
+          // MUST come before the `snapshot.data` read: on error `data` is null,
+          // so falling through would coerce a failed read into an empty list
+          // and render it as "No recordings yet" (T-06-01).
+          if (snapshot.hasError) {
+            return _HistoryError(onRetry: () => setState(_load));
           }
           final sessions = snapshot.data ?? const <Session>[];
           if (sessions.isEmpty) {
@@ -109,6 +136,58 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 }
 
+/// Shown when the history read FAILED — deliberately a different widget, a
+/// different key and different copy from [_EmptyHistory].
+///
+/// Never renders `snapshot.error`: internal detail stays out of the UI
+/// (T-06-04), matching the contract `kRecordingErrorMessage` already sets on
+/// the practice screen.
+class _HistoryError extends StatelessWidget {
+  const _HistoryError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Center(
+      key: const Key('history-error'),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.error_outline_rounded,
+              size: 48,
+              color: theme.colorScheme.error,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              kHistoryErrorMessage,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyLarge
+                  ?.copyWith(color: theme.colorScheme.error),
+            ),
+            const SizedBox(height: 16),
+            TextButton(
+              key: const Key('history-error-retry'),
+              onPressed: onRetry,
+              style: TextButton.styleFrom(
+                // Touch-target floor, not part of the 4px content scale.
+                minimumSize: const Size(64, 48),
+              ),
+              child: const Text('Try again'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown when the read SUCCEEDED and returned nothing.
 class _EmptyHistory extends StatelessWidget {
   const _EmptyHistory();
 
@@ -117,6 +196,7 @@ class _EmptyHistory extends StatelessWidget {
     final theme = Theme.of(context);
 
     return Center(
+      key: const Key('history-empty'),
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
