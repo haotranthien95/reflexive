@@ -31,6 +31,7 @@ class PracticeScreen extends StatefulWidget {
   const PracticeScreen({
     super.key,
     required this.config,
+    required this.questions,
     this.recordingService,
     this.audioPlayerService,
     this.databaseHelper,
@@ -38,6 +39,15 @@ class PracticeScreen extends StatefulWidget {
   });
 
   final SessionConfig config;
+
+  /// This session's prompts, ALREADY RESOLVED (D-34).
+  ///
+  /// The "takes its whole configuration as a value" contract above extends to
+  /// the bank itself: `SetupScreen` ran the Firestore query and blocked on it
+  /// (D-33) before pushing this screen, so this screen never discovers a data
+  /// dependency mid-session and has no failure to render. Passed straight
+  /// through to [PracticeState] — this widget does not read it.
+  final List<String> questions;
 
   /// Optional injected collaborators — the seam a host test uses to run this
   /// screen without a platform channel. Null in production, where the real
@@ -85,6 +95,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
       audioPlayerService: widget.audioPlayerService ?? AudioPlayerService(),
       databaseHelper: widget.databaseHelper ?? DatabaseHelper(),
       config: widget.config,
+      questions: widget.questions,
     );
     // Synchronous by design: `startSession()` enters `getReady` before the
     // first build, so the construction-time `arming` phase is never rendered.

@@ -6,6 +6,7 @@ import '../data/questions.dart';
 import '../db/database_helper.dart';
 import '../models/session_config.dart';
 import '../services/audio_player_service.dart';
+import '../services/firestore_question_source.dart';
 import '../services/recording_service.dart';
 import '../utils/audio_paths.dart';
 import 'history_screen.dart';
@@ -52,17 +53,23 @@ class SetupScreen extends StatefulWidget {
     this.databaseHelper,
     this.recordingService,
     this.audioPlayerService,
-    this.subjects,
+    this.questionSource,
   });
 
   final DatabaseHelper? databaseHelper;
   final RecordingService? recordingService;
   final AudioPlayerService? audioPlayerService;
 
-  /// Overrides [kSubjects]. Exists for the held-out empty-topic-list test: the
-  /// empty branch is unreachable in production this phase (the list is a
-  /// non-empty constant) and goes live when Phase 3 sources it from Firestore.
-  final List<String>? subjects;
+  /// The question bank, injectable (D-47).
+  ///
+  /// Replaces the Phase 2 `subjects` list override, which could only stand in
+  /// for the topic checkboxes. A whole [QuestionSource] stands in for the bank:
+  /// a test can now script the subjects read AND the Start query — including
+  /// empty results and failures — which is what lets every read state be covered
+  /// on the host with no device and no new dependency.
+  ///
+  /// Null in production, where [FirestoreQuestionSource] is constructed lazily.
+  final QuestionSource? questionSource;
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
@@ -72,6 +79,11 @@ class _SetupScreenState extends State<SetupScreen> {
   late final DatabaseHelper _databaseHelper =
       widget.databaseHelper ?? DatabaseHelper();
 
+  /// Resolved lazily, so a test that injects a fake never constructs a Firestore
+  /// handle — the same rule `PracticeScreen` applies to its wakelock.
+  late final QuestionSource _questionSource =
+      widget.questionSource ?? FirestoreQuestionSource();
+
   final Set<String> _selectedTopics = <String>{};
 
   String _level = kDefaultLevel;
@@ -80,12 +92,48 @@ class _SetupScreenState extends State<SetupScreen> {
   int _answerSeconds = kDefaultAnswerSeconds;
   bool _autoReplay = kDefaultAutoReplay;
 
-  List<String> get _subjects => widget.subjects ?? kSubjects;
+  /// The topic checkboxes, read from the bank (SETUP-01/BANK-02).
+  ///
+  /// A state FIELD, not a getter over a constant: it is now filled
+  /// asynchronously, and it starts empty for the frames before the read lands.
+  /// This plan wires the success branch only — the loading, empty and
+  /// could-not-load states the empty list currently renders as `_NoTopics` are
+  /// plan 02's work (D-37).
+  List<String> _subjects = const <String>[];
 
   @override
   void initState() {
     super.initState();
     unawaited(_sweepOrphanRecordings());
+    // Started alongside the sweep and NOT chained to it: neither awaits the
+    // other, so the sweep's ordering contract (it must finish before any
+    // recording file name is chosen) is untouched by how long the bank read
+    // takes, and a slow network cannot delay the cleanup.
+    unawaited(_loadSubjects());
+  }
+
+  /// The one place the subjects read is issued (D-35: re-read on every visit).
+  Future<void> _loadSubjects() async {
+    final List<String> subjects;
+    try {
+      subjects = await _questionSource.subjects();
+    } catch (error, stack) {
+      // KNOWN GAP, closed by plan 02. A failed read currently leaves [_subjects]
+      // empty, which renders `_NoTopics` — "No topics yet" — and that is exactly
+      // the lie D-37 forbids: a read failure presented as missing data. Plan 02
+      // adds the distinct `setup-topics-error` state with its own Retry. This
+      // catch exists NOW only so the failure is contained and logged rather than
+      // surfacing as an unhandled async error; it is not the handling.
+      debugPrint('Subjects read failed: $error');
+      debugPrintStack(stackTrace: stack);
+      return;
+    }
+    // `setState` after an `await` needs this guard — the first in this file,
+    // because until now nothing here set state post-await. The read outlives the
+    // screen whenever the user leaves Setup before it lands, and calling
+    // `setState` on a disposed `State` throws.
+    if (!mounted) return;
+    setState(() => _subjects = subjects);
   }
 
   /// Sweeps recording files no database row points at.
@@ -125,7 +173,16 @@ class _SetupScreenState extends State<SetupScreen> {
     });
   }
 
-  void _startSession() {
+  /// Runs the real filtered query, then pushes the session (D-33).
+  ///
+  /// The query blocks HERE rather than under the get-ready countdown on the
+  /// practice screen: a failure therefore leaves the user on Setup with every
+  /// setting intact and nothing to unwind, and `PracticeScreen` keeps its
+  /// contract of being handed everything it needs.
+  Future<void> _startSession() async {
+    // Snapshotted FIRST and synchronously: the values at tap time are the ones
+    // that count. Anything the user changes while the query is in flight belongs
+    // to the next session, not this one.
     final config = SessionConfig(
       topics: List<String>.unmodifiable(
         _subjects.where(_selectedTopics.contains),
@@ -137,10 +194,31 @@ class _SetupScreenState extends State<SetupScreen> {
       autoReplay: _autoReplay,
     );
 
+    final List<String> questions;
+    try {
+      questions = await _questionSource.questionsFor(config);
+    } catch (error, stack) {
+      // KNOWN GAP, closed by plan 02, which adds the busy state (D-33), the
+      // zero-result message naming both level and topics (D-41) and the inline
+      // Start-failure message (D-38). As above, this catch contains and logs the
+      // failure rather than handling it: the user currently sees the tap do
+      // nothing, which is wrong but not a lie.
+      debugPrint('Start query failed: $error');
+      debugPrintStack(stackTrace: stack);
+      return;
+    }
+    // A zero-result combination is real and expected (D-41) — `Travel` at C1 has
+    // no questions by design. Plan 02 explains it inline; refusing to navigate is
+    // this plan's placeholder, because `questionAt` divides by `length` and an
+    // empty bank would crash the loop on its first prompt.
+    if (questions.isEmpty) return;
+    if (!mounted) return;
+
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => PracticeScreen(
           config: config,
+          questions: questions,
           databaseHelper: _databaseHelper,
           recordingService: widget.recordingService,
           audioPlayerService: widget.audioPlayerService,
@@ -253,7 +331,13 @@ class _SetupScreenState extends State<SetupScreen> {
                 ),
               ),
             ),
-            _StartFooter(canStart: canStart, onStart: _startSession),
+            // `unawaited` rather than passing `_startSession` directly: the
+            // footer's callback is a `VoidCallback`, and making the fire-and-
+            // forget explicit is what keeps `unawaited_futures` honest here.
+            _StartFooter(
+              canStart: canStart,
+              onStart: () => unawaited(_startSession()),
+            ),
           ],
         ),
       ),
@@ -482,9 +566,17 @@ class _ReplayToggle extends StatelessWidget {
   }
 }
 
-/// Unreachable in Phase 2 — [kSubjects] is a non-empty constant (D-19). The copy
-/// is locked now so Phase 3's Firestore swap has a state to land on rather than
-/// inventing one under deadline.
+/// Reachable from Phase 3 onward: the subject list is now read from Firestore,
+/// so a genuinely empty bank renders this. The copy was locked in Phase 2 so the
+/// swap had a state to land on rather than inventing one under deadline.
+///
+/// **It is currently over-used, and plan 02 fixes that.** This plan leaves
+/// [_SetupScreenState._subjects] empty for the frames before the read lands AND
+/// when the read fails, so this state doubles as "loading" and "could-not-load"
+/// — and telling a user with a full bank and a flat connection that their topics
+/// are gone is exactly the failure D-37 was written to prevent. Plan 02 gives
+/// loading and failure their own states and returns this one to meaning only
+/// what it says.
 class _NoTopics extends StatelessWidget {
   const _NoTopics();
 

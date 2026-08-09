@@ -1,7 +1,21 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Required by package:record to capture spoken practice answers.
          Recordings are written to app-private storage only — no
-         WRITE_EXTERNAL_STORAGE and no network permission are requested. -->
+         WRITE_EXTERNAL_STORAGE is requested, and recordings never leave the
+         device.
+
+         RECORD_AUDIO is still the ONLY permission declared in this file. From
+         Phase 3 the merged release manifest also carries INTERNET, contributed
+         TRANSITIVELY by cloud_firestore so the app can read the Firestore
+         question bank (D-39) — it is deliberately not declared here, because
+         declaring it would hide which dependency actually asks for it.
+
+         That claim is verified against the MERGED RELEASE manifest
+         (build/app/intermediates/merged_manifest/release/.../AndroidManifest.xml),
+         not against this source file: a source file cannot tell you what a
+         dependency added. Re-run that inspection whenever a dependency changes,
+         and confirm INTERNET is the only thing Firebase brought — no analytics,
+         no ads, no surprise transitive permission. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application
         android:label="englishreflex"

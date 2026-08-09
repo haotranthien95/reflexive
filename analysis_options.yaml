@@ -9,6 +9,18 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  exclude:
+    # `build/` is generated output, never source. It became load-bearing to
+    # exclude it in Phase 3: adding `cloud_firestore` makes `flutter pub get`
+    # resolve the Firebase Apple SDKs through SwiftPM, which checks their FULL
+    # Dart sources out into `build/macos/SourcePackages/`. The analyzer walks
+    # them, and `flutter analyze` then reports ~100 lints and 4 errors belonging
+    # to a third-party package — drowning this project's own findings and making
+    # the phase's "analyze is clean" gate impossible to satisfy honestly.
+    # Deleting the directory is not a fix; it reappears on the next `pub get`.
+    - build/**
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`

@@ -1,23 +1,29 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import 'firebase_options.dart';
 import 'screens/setup_screen.dart';
 
 /// Makes the bundled `assets/fonts/Baloo2-SemiBold.ttf` the ONLY way Baloo 2
 /// can load, and registers its licence.
 ///
 /// `google_fonts` otherwise downloads the family from `fonts.gstatic.com` on
-/// first launch. That is wrong here twice over: this app is documented as fully
-/// on-device (a fetch would leak an install/launch signal to a third-party CDN),
-/// and the release Android manifest deliberately requests no network permission
-/// — so in a RELEASE build the fetch cannot succeed and the app silently falls
-/// back to the default Material font. The typography locked by D-15 then simply
-/// does not ship, and nobody notices, because debug builds *do* have network
-/// access and look correct.
+/// first launch, and the typography locked by D-15 then quietly does not ship
+/// while debug builds keep looking correct.
 ///
-/// Setting `allowRuntimeFetching = false` converts that silent degradation into
+/// **This guard now matters MORE than it did, not less.** Through Phases 1 and 2
+/// the release Android manifest requested no network permission at all, so a
+/// runtime font fetch was doomed to fail in release regardless. Phase 3 retires
+/// that posture: `cloud_firestore` contributes `INTERNET` to the merged release
+/// manifest so the app can read the question bank (D-39). A runtime font fetch
+/// would therefore now SUCCEED — silently, on a third-party CDN, leaking an
+/// install/launch signal from an app documented as on-device except for the
+/// bank. The one thing standing between that and the user is this line.
+///
+/// Setting `allowRuntimeFetching = false` also converts silent degradation into
 /// a loud failure: with no network path left, a missing or misnamed asset makes
 /// `loadFontIfNecessary` throw instead of falling back. **That loud failure is
 /// the point** — it is what `test/theme/typography_test.dart` asserts on, so a
@@ -31,9 +37,21 @@ void configureFonts() {
   });
 }
 
-void main() {
-  // Required before `configureFonts()` so `rootBundle` is usable.
+Future<void> main() async {
+  // Required before `configureFonts()` so `rootBundle` is usable, and before
+  // `Firebase.initializeApp()` so the platform channels it needs exist.
   WidgetsFlutterBinding.ensureInitialized();
+  // The question bank's connection, opened before the first frame (D-44). The
+  // config comes from the generated lib/firebase_options.dart — that file is
+  // this app's identity and is never hand-edited; re-run `flutterfire
+  // configure` to change it.
+  //
+  // Awaited rather than fired-and-forgotten: `SetupScreen` reads the bank from
+  // its own `initState`, so a not-yet-initialised Firebase would be a race the
+  // very first screen loses.
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   configureFonts();
   runApp(const EnglishReflexApp());
 }

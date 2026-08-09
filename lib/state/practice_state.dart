@@ -85,6 +85,7 @@ class PracticeState extends ChangeNotifier {
     required this.audioPlayerService,
     required this.databaseHelper,
     required this.config,
+    required this.questions,
   });
 
   final RecordingService recordingService;
@@ -94,16 +95,34 @@ class PracticeState extends ChangeNotifier {
   /// This session's configuration, fixed for its whole lifetime (D-18).
   final SessionConfig config;
 
-  /// The Phase 3 swap point. The loop asks this for prompts and never reads
-  /// [kQuestions] itself.
-  final QuestionSource questionSource = const PlaceholderQuestionSource();
+  /// This session's prompts, ALREADY RESOLVED, in bank order (D-34).
+  ///
+  /// A value, never a source. `SetupScreen` ran the Firestore query before it
+  /// pushed the practice screen, so after Start there is no code path from here
+  /// to the network — not a lazy one, not a retry, not a cache refresh. That is
+  /// a structural property of this field's type, not a discipline someone has to
+  /// remember: a `List<String>` cannot reach Firestore.
+  ///
+  /// The rejected alternative was carrying the prompts inside [config], which is
+  /// documented as "what Setup decided" and whose no-serialization rule exists
+  /// to keep it a settings object.
+  ///
+  /// Never empty: `SetupScreen` does not navigate here with a zero-result query
+  /// (D-41 explains that at Start instead), and [questionAt] divides by
+  /// `length`.
+  final List<String> questions;
 
   /// Used ONLY for the recording file-name entropy suffix. The question picker
   /// used to draw from this too; D-23 replaced that with sequential bank order.
   final Random _random = Random();
 
   /// The prompt currently shown to the user.
-  String currentQuestion = kQuestions.first;
+  ///
+  /// `late` only because it seeds from [questions], which is a constructor
+  /// parameter and so is not available to a plain field initializer. Seeded
+  /// through [questionAt] rather than `questions.first` so question 1 comes from
+  /// the same function every later question does.
+  late String currentQuestion = questionAt(questions, 0);
 
   /// 1-based position in the session — the `k` of "Question k of N".
   ///
@@ -532,8 +551,13 @@ class PracticeState extends ChangeNotifier {
   /// both call it for the same question, and a picker with hidden state (as
   /// Phase 1's random one had) would hand them two different prompts — the
   /// question card would change between "read this" and "speak now".
-  String _pickQuestion() =>
-      questionAt(questionSource.questionsFor(config), questionNumber - 1);
+  ///
+  /// **It must stay SYNCHRONOUS** even though the bank now comes from Firestore
+  /// (D-34). It lost a hop rather than gaining an `await`: the prompts were
+  /// resolved on Setup and handed here as [questions], so there is nothing left
+  /// to wait for. Making this `async` would reintroduce exactly the read/arm
+  /// split the doc above rules out.
+  String _pickQuestion() => questionAt(questions, questionNumber - 1);
 
   /// Starts the session with the 3·2·1 get-ready countdown (LOOP-01).
   ///

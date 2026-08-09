@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:englishreflex/data/questions.dart';
 import 'package:englishreflex/models/session_config.dart';
 import 'package:englishreflex/screens/practice_screen.dart';
 import 'package:englishreflex/services/recording_service.dart';
@@ -121,6 +122,7 @@ void main() {
       MaterialApp(
         home: _SetupStub(
           session: PracticeScreen(
+            questions: kQuestions,
             config: sessionConfig,
             recordingService: recordingService,
             audioPlayerService: FakeAudioPlayerService(calls),
