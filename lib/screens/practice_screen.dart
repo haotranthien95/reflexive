@@ -118,6 +118,11 @@ class _PracticeScreenState extends State<PracticeScreen> {
       builder: (context, _) {
         final bool hasError = _state.phase == PracticePhase.error;
         final bool isComplete = _state.phase == PracticePhase.complete;
+        final bool isPaused = _state.isPaused;
+        // What the anchor and focus slots render. While paused this is the
+        // FROZEN phase, so the numeral or the question card stays on screen at
+        // the value it stopped on (UI-SPEC paused row).
+        final PracticePhase displayPhase = _state.displayPhase;
 
         return Scaffold(
           appBar: AppBar(
@@ -134,6 +139,36 @@ class _PracticeScreenState extends State<PracticeScreen> {
             // The user cannot navigate away from an active session (D-29), and
             // there is deliberately no History icon here — it lives on Setup.
             automaticallyImplyLeading: false,
+            // CTRL-01: Pause/Resume is present in EVERY session phase, and
+            // merely disabled where there is no clock to freeze — never hidden,
+            // so it can never appear to have vanished mid-session. The one
+            // exception is `complete`, where the session is genuinely over and
+            // the whole action goes away.
+            actions: isComplete
+                ? null
+                : <Widget>[
+                    IconButton(
+                      key: const Key('practice-pause-action'),
+                      icon: Icon(
+                        isPaused
+                            ? Icons.play_arrow_rounded
+                            : Icons.pause_rounded,
+                      ),
+                      tooltip: isPaused ? 'Resume session' : 'Pause session',
+                      // Coral when live, warm brown at 38% when inert — a
+                      // disabled coral icon would still read as an affordance.
+                      style: IconButton.styleFrom(
+                        foregroundColor: theme.colorScheme.primary,
+                        disabledForegroundColor:
+                            theme.colorScheme.onSurface.withValues(alpha: 0.38),
+                      ),
+                      onPressed: _state.canPause
+                          ? () => unawaited(
+                                isPaused ? _state.resume() : _state.pause(),
+                              )
+                          : null,
+                    ),
+                  ],
           ),
           body: SafeArea(
             // The banner is docked above the question, never instead of it:
@@ -146,6 +181,10 @@ class _PracticeScreenState extends State<PracticeScreen> {
                     message: _state.errorMessage ?? kRecordingErrorMessage,
                     onRetry: _state.retry,
                   ),
+                // Same slot, same construction as the error banner. The two are
+                // mutually exclusive by construction: a pause that could not be
+                // confirmed lands in `error`, never in `paused`.
+                if (isPaused) const _PausedBanner(),
                 Expanded(
                   // Centred normally, scrollable rather than clipped once the
                   // OS text-scale setting grows the content past the viewport
@@ -170,14 +209,18 @@ class _PracticeScreenState extends State<PracticeScreen> {
                               // swap is why neither countdown can be mistaken
                               // for the other, and the matching box is why it
                               // costs no layout shift (D-22).
-                              if (_state.phase == PracticePhase.reading)
+                              if (displayPhase == PracticePhase.reading)
                                 CountdownRing(
                                   remainingSeconds: _state.countdownSeconds,
                                   totalSeconds: widget.config.thinkingSeconds,
                                 )
                               else
                                 Mascot(
-                                  isRecording:
+                                  // The pulse ring means "the microphone is
+                                  // LIVE", so it is off in every paused state —
+                                  // leaving it running while frozen would be the
+                                  // single worst honesty failure in this phase.
+                                  isRecording: !isPaused &&
                                       _state.phase == PracticePhase.recording,
                                   isError: hasError,
                                 ),
@@ -187,7 +230,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
                               // of them (D-22): during the 3·2·1 there is
                               // nothing to read yet, and at the end there is
                               // nothing left to answer.
-                              if (_state.phase == PracticePhase.getReady)
+                              if (displayPhase == PracticePhase.getReady)
                                 _CountdownGlyph(value: _state.countdownSeconds)
                               else if (isComplete)
                                 _CompletionHeadline(
@@ -207,6 +250,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
                                     unawaited(_state.stopRecording()),
                                 onStart: () =>
                                     unawaited(_state.startNewQuestion()),
+                                onResume: () => unawaited(_state.resume()),
                                 recordingSecondsRemaining:
                                     _state.recordingSecondsRemaining,
                                 // "Get ready…" only for the session's own
@@ -307,6 +351,46 @@ class _CompletionHeadline extends StatelessWidget {
           style: theme.textTheme.bodyLarge,
         ),
       ],
+    );
+  }
+}
+
+/// The paused banner (UI-SPEC "paused" state), docked in the same slot and
+/// built the same way as [_ErrorBanner].
+///
+/// **This widget is a claim about the microphone, and it must never overstate
+/// one.** It is reachable only from `PracticePhase.paused`, and
+/// `PracticeState.pause()` publishes that phase only once the recorder has
+/// CONFIRMED it actually stopped. A pause that could not be confirmed lands in
+/// the error phase instead — so this copy can never appear over a live
+/// microphone.
+class _PausedBanner extends StatelessWidget {
+  const _PausedBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      key: const Key('practice-paused-banner'),
+      width: double.infinity,
+      color: theme.colorScheme.surface,
+      padding: const EdgeInsets.all(16), // md
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.pause_rounded, color: theme.colorScheme.primary),
+          const SizedBox(width: 8), // sm
+          // Expanded (not a fixed width) so the copy wraps instead of
+          // overflowing at the largest OS text-scale setting.
+          Expanded(
+            child: Text(
+              'Paused — nothing is being recorded.',
+              style: theme.textTheme.labelLarge,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

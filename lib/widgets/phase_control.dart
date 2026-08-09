@@ -19,6 +19,7 @@ const Map<PracticePhase, Key> kPhaseControlKeys = <PracticePhase, Key>{
   PracticePhase.recording: Key('practice-control-recording'),
   PracticePhase.saving: Key('practice-control-saving'),
   PracticePhase.replaying: Key('practice-control-replaying'),
+  PracticePhase.paused: Key('practice-control-paused'),
   PracticePhase.complete: Key('practice-control-complete'),
   PracticePhase.error: Key('practice-control-error'),
 };
@@ -77,6 +78,7 @@ class PhaseControl extends StatelessWidget {
     required this.phase,
     required this.onStop,
     required this.onStart,
+    this.onResume,
     this.recordingSecondsRemaining,
     this.isFirstQuestion = true,
     this.onViewSession,
@@ -90,6 +92,11 @@ class PhaseControl extends StatelessWidget {
 
   /// Re-arms the loop after it has come to rest without a recording.
   final VoidCallback onStart;
+
+  /// Un-freezes a paused session (the `RESUME` pill). A null callback renders a
+  /// DISABLED pill rather than crashing — the same guard rail the completion
+  /// callbacks use.
+  final VoidCallback? onResume;
 
   /// Seconds left on the `d` deadline, rendered beneath STOP (D-21). Null
   /// renders no readout rather than a placeholder.
@@ -219,6 +226,24 @@ class PhaseControl extends StatelessWidget {
           key: kPhaseControlKeys[PracticePhase.replaying],
           textAlign: TextAlign.center,
           style: theme.textTheme.bodyLarge,
+        );
+
+      case PracticePhase.paused:
+        // The one control that matters while frozen. A caption would be a dead
+        // end here: nothing but this tap moves a paused session forward.
+        return SizedBox(
+          key: kPhaseControlKeys[PracticePhase.paused],
+          height: 64, // Touch-target floor from the UI-SPEC spacing exceptions.
+          child: FilledButton.icon(
+            onPressed: onResume,
+            style: FilledButton.styleFrom(
+              backgroundColor: theme.colorScheme.primary,
+              foregroundColor: theme.colorScheme.onPrimary,
+              padding: const EdgeInsets.symmetric(horizontal: 32), // xl
+            ),
+            icon: const Icon(Icons.play_arrow_rounded),
+            label: Text('RESUME', style: theme.textTheme.labelLarge),
+          ),
         );
 
       case PracticePhase.complete:

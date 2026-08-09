@@ -28,6 +28,10 @@ import '../utils/pausable_countdown.dart';
 /// [reading] running fully to zero BEFORE [arming] begins is D-20: the
 /// countdown never lands inside the answer file, and the microphone is never
 /// claimed to be live while it is still cold.
+/// [paused] is a PHASE rather than an orthogonal `bool isPaused` flag, so the
+/// `kPhaseControlKeys` totality test covers it like every other phase: a paused
+/// session that rendered no control would be a screen the user cannot leave.
+/// The phase it froze is remembered separately and restored verbatim on resume.
 enum PracticePhase {
   idle,
   getReady,
@@ -36,6 +40,7 @@ enum PracticePhase {
   recording,
   saving,
   replaying,
+  paused,
   complete,
   error,
 }
@@ -147,7 +152,44 @@ class PracticeState extends ChangeNotifier {
   /// re-entrancy guard (the service half lives in [RecordingService.start]).
   Future<void>? _startInFlight;
 
+  /// The phase [pause] froze, so [resume] can restore it EXACTLY. Null whenever
+  /// the loop is not paused.
+  PracticePhase? _phaseBeforePause;
+
+  /// A Pause tap that landed in a phase with nothing to freeze but which is
+  /// about to become pausable. See [pause] for the race this resolves.
+  bool _pendingPauseRequest = false;
+
   bool _disposed = false;
+
+  /// The phases in which there is actually a clock to freeze.
+  ///
+  /// Everything else — `arming`, `saving`, `error`, `idle`, `complete` — renders
+  /// the Pause action DISABLED rather than hidden (UI-SPEC action-availability
+  /// table), so it can never appear to have vanished mid-session.
+  static const Set<PracticePhase> _pausablePhases = <PracticePhase>{
+    PracticePhase.getReady,
+    PracticePhase.reading,
+    PracticePhase.recording,
+    PracticePhase.replaying,
+  };
+
+  /// Whether the app bar's Pause/Resume action is live right now.
+  bool get canPause =>
+      phase == PracticePhase.paused || _pausablePhases.contains(phase);
+
+  /// True while the session is frozen.
+  bool get isPaused => phase == PracticePhase.paused;
+
+  /// What the SCREEN should render for the anchor and focus slots.
+  ///
+  /// While paused this is the frozen phase, not `paused` itself: the UI-SPEC
+  /// keeps whatever the underlying phase showed on screen at its frozen value,
+  /// because a frozen numeral plus the paused banner is unambiguous in a way
+  /// that hiding either one would not be. The CONTROL slot deliberately uses
+  /// the real [phase], so the RESUME pill is what the user sees.
+  PracticePhase get displayPhase =>
+      phase == PracticePhase.paused ? (_phaseBeforePause ?? phase) : phase;
 
   @override
   void dispose() {
@@ -156,7 +198,120 @@ class PracticeState extends ChangeNotifier {
     // tick against a torn-down screen and fail the test binding at teardown.
     _countdown?.cancel();
     _countdown = null;
+    // Nothing paused-but-armed survives a teardown, and no deferred pause can
+    // fire against a disposed object.
+    _phaseBeforePause = null;
+    _pendingPauseRequest = false;
     super.dispose();
+  }
+
+  /// Freezes every clock that is currently running (CTRL-04 / D-24).
+  ///
+  /// One method freezes all four: the 3·2·1, the `t` countdown, the microphone
+  /// plus its `d` deadline, and a replay plus its completion bound. Exactly one
+  /// of them is ever live, which is what makes a single pause path sufficient.
+  ///
+  /// **The paused phase is published only once the microphone is CONFIRMED
+  /// paused.** [RecordingService.pause] returns false when the recorder did not
+  /// actually stop — `record`'s pause is a guarded early return that no-ops
+  /// silently in the wrong state — and this method routes that straight into
+  /// [_fail]. Showing the Phase 1 error banner is the honest outcome; showing a
+  /// banner reading "nothing is being recorded" over a live microphone is the
+  /// worst failure available in this phase.
+  ///
+  /// Idempotent: a second Pause tap is a no-op that neither double-freezes a
+  /// clock nor skips one.
+  Future<void> pause() async {
+    if (phase == PracticePhase.paused) return;
+
+    if (!_pausablePhases.contains(phase)) {
+      // THE `d`-DEADLINE-VS-PAUSE-TAP RACE. The auto-stop wins: by the time the
+      // tap is handled the loop has already left `recording` and the answer is
+      // being finalized, and interrupting that would risk the one thing this
+      // phase must never lose. But the request is DEFERRED rather than dropped
+      // — a user who tapped Pause gets a paused session either way, which is
+      // strictly kinder than making them tap again. This mirrors Phase 1's
+      // "first signal wins, second is a no-op" resolution of the manual-Stop
+      // versus auto-stop race.
+      //
+      // Only the two strictly transient phases defer. A tap in `error`, `idle`
+      // or `complete` is genuinely inert: those are resting states, and a pause
+      // queued there would fire much later against a clock the user never meant
+      // to freeze.
+      if (phase == PracticePhase.arming || phase == PracticePhase.saving) {
+        _pendingPauseRequest = true;
+      }
+      return;
+    }
+
+    final PracticePhase frozen = phase;
+    switch (frozen) {
+      case PracticePhase.recording:
+        if (!await recordingService.pause()) {
+          _fail();
+          return;
+        }
+      case PracticePhase.replaying:
+        // Freezes the player AND its completion bound together, so a long pause
+        // cannot trip the bound and advance the loop behind the user's back.
+        await audioPlayerService.pause();
+      case PracticePhase.getReady:
+      case PracticePhase.reading:
+        _countdown?.pause();
+      default:
+        return;
+    }
+
+    _phaseBeforePause = frozen;
+    phase = PracticePhase.paused;
+    _notify();
+  }
+
+  /// The exact mirror of [pause]: continues from where the freeze stopped.
+  ///
+  /// Never restarts a step. The countdown continues on the second it stopped
+  /// on, the recorder continues into the same file, and the replay continues
+  /// from the same position rather than playing the answer again.
+  ///
+  /// Idempotent, and believed on the same terms as [pause]: a recorder that
+  /// does not confirm it resumed routes to [_fail] rather than publishing a
+  /// running session over a still-frozen microphone.
+  Future<void> resume() async {
+    if (phase != PracticePhase.paused) return;
+
+    final PracticePhase frozen = _phaseBeforePause ?? PracticePhase.getReady;
+    switch (frozen) {
+      case PracticePhase.recording:
+        if (!await recordingService.resume()) {
+          _phaseBeforePause = null;
+          _fail();
+          return;
+        }
+      case PracticePhase.replaying:
+        await audioPlayerService.resume();
+      case PracticePhase.getReady:
+      case PracticePhase.reading:
+        _countdown?.resume();
+      default:
+        break;
+    }
+
+    _phaseBeforePause = null;
+    phase = frozen;
+    _notify();
+  }
+
+  /// Applies a Pause tap that was deferred by the race described in [pause].
+  ///
+  /// Called on entry to each phase that has a clock worth freezing. The replay
+  /// is deliberately NOT one of those entry points: it begins and ends inside a
+  /// single await, so a pause applied at its start would have nothing to freeze
+  /// yet. The get-ready countdown that follows it is the first moment the
+  /// deferred freeze is both meaningful and visible.
+  void _applyPendingPause() {
+    if (!_pendingPauseRequest) return;
+    _pendingPauseRequest = false;
+    unawaited(pause());
   }
 
   /// [notifyListeners] that is safe after [dispose].
@@ -216,6 +371,9 @@ class PracticeState extends ChangeNotifier {
         onElapsed: _enterReading,
       ),
     );
+    // After the countdown is armed, never before — a deferred pause needs a
+    // clock that actually exists to freeze.
+    _applyPendingPause();
   }
 
   /// The per-question `t` countdown (LOOP-02). It runs FULLY to zero before the
@@ -237,6 +395,7 @@ class PracticeState extends ChangeNotifier {
         onElapsed: () => unawaited(startNewQuestion()),
       ),
     );
+    _applyPendingPause();
   }
 
   /// Shows a fresh question and immediately starts recording — no Start button
@@ -296,6 +455,9 @@ class PracticeState extends ChangeNotifier {
       recordingSecondsRemaining = config.answerSeconds;
       phase = PracticePhase.recording;
       _notify();
+      // A Pause tapped during the `arming` window lands here, once there is a
+      // live microphone and a `d` deadline to freeze.
+      _applyPendingPause();
     } catch (_) {
       // Deliberately swallows the exception object: only the fixed UI-SPEC copy
       // ever reaches the user. Nothing is persisted on this path — there is no
@@ -442,7 +604,16 @@ class PracticeState extends ChangeNotifier {
       phase = PracticePhase.replaying;
       _notify();
       try {
-        await audioPlayerService.play(finalizedPath, awaitCompletion: true);
+        await audioPlayerService.play(
+          finalizedPath,
+          awaitCompletion: true,
+          // Derived from the SESSION's `d`, not the fixed Phase 1 ceiling: an
+          // answer can be up to 120 s (SETUP-05), and a 65 s bound would trip
+          // halfway through its own replay. The bound is freezable and excludes
+          // paused time.
+          completionTimeout:
+              replayCompletionTimeoutFor(Duration(seconds: config.answerSeconds)),
+        );
       } catch (_) {
         // Cosmetic only. See above — never a reason to strand the loop.
       }
