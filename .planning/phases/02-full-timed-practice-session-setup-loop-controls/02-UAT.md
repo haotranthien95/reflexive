@@ -1,22 +1,14 @@
 ---
-status: testing
+status: complete
 phase: 02-full-timed-practice-session-setup-loop-controls
 source: [02-VERIFICATION.md]
 started: 2026-08-09T04:30:00Z
-updated: 2026-08-09T04:30:00Z
+updated: 2026-08-09T05:16:00Z
 ---
 
 ## Current Test
 
-number: 1
-name: D-31 real-device interruption check (answered call, backgrounding, screen timeout)
-expected: |
-  Steps 3/5: the session is parked paused, the banner reads "Paused — your answer was
-  saved when the app was interrupted.", recording has NOT resumed by itself, and the
-  partial answer is already in Exercise History.
-  Step 4: the session continues from where it stopped, no answer replayed from the start.
-  Step 6: the screen stays on for the whole session and turns off normally afterwards.
-awaiting: user response
+[testing complete]
 
 ## Tests
 
@@ -44,7 +36,7 @@ why_human: |
   and the commit; they cannot prove the OS delivers the signal with enough runway.
   Step 5 exists specifically to settle A1. Step 6 also settles the wakelock (D-30),
   whose host test proves only that the seam is called.
-result: [pending]
+result: pass
 
 ### 2. Real-microphone capture across the widened `d` range
 
@@ -53,7 +45,7 @@ and to 10 s, and let each auto-stop fire.
 
 expected: Recording auto-stops at the configured `d`, the on-screen readout hits 0:00 at the same moment, and the answer is playable from History.
 why_human: The `d` deadline is host-tested against a fake recorder backend. Real capture, real m4a finalization and real playback at the new 10–120 s range have never run on hardware. Phase 1 already carries device-UAT-pending on LOOP-03/LOOP-06 for the same reason; Phase 2 widens the range.
-result: [pending]
+result: pass
 
 ### 3. UI-SPEC visual conformance on a real device
 
@@ -62,7 +54,7 @@ the stop dialog and the completion state against `02-UI-SPEC.md` on a real devic
 
 expected: Colour roles, the Baloo 2 headings, the 96px ring vs the 128px glyph distinction (D-22), touch-target floors and the cartoon-like feel match the UI-SPEC.
 why_human: Visual appearance, perceived distinctness of the two countdowns, and "playful/colourful" quality are not assertable by widget tests.
-result: [pending]
+result: pass
 
 ### 4. Confirm the 8 judgment-tier prohibition verdicts
 
@@ -71,15 +63,17 @@ Review the 8 judgment-tier prohibitions listed in the Prohibitions section of
 
 expected: Each MUST-NOT is confirmed as not having happened.
 why_human: unverified-prohibition — human review recommended. These prohibitions carry no `verification: test` marker and no wired negative-test enforcement, so the recorded verdicts are NON-AUTHORITATIVE LLM judgements backed by codebase evidence, never a green automated pass.
-result: [pending]
+result: pass
 
 ## Summary
 
 total: 4
-passed: 0
+passed: 4
 issues: 0
-pending: 4
+pending: 0
 skipped: 0
 blocked: 0
 
 ## Gaps
+
+[none]
