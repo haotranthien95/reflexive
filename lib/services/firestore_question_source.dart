@@ -40,6 +40,70 @@ class QuestionBankUnavailableException implements Exception {
   String toString() => 'QuestionBankUnavailableException';
 }
 
+/// Firestore's hard cap on how many values a `whereIn` clause may carry: **30**.
+///
+/// **Confirmed against the INSTALLED `cloud_firestore` 6.8.0**, not assumed and
+/// not carried over from an older limit. The package enforces it itself, in
+/// `lib/src/query.dart`:
+///
+/// ```dart
+/// // This assert checks whether "in" or "array-contains-any" have 30 or less filters
+/// assert(
+///   (operator != 'in' && operator != 'array-contains-any') ||
+///       (value as Iterable).length <= 30,
+///   "'in' filters support a maximum of 30 elements in the value [Iterable].",
+/// );
+/// ```
+///
+/// That plugin-side check is a bare `assert`, so it is **stripped from release
+/// builds**: in release an over-limit query would go to the server and come back
+/// as an opaque `INVALID_ARGUMENT` failure with nothing in the log naming the
+/// real cause. This constant and the guard in [FirestoreQuestionSource.questionsFor]
+/// exist so the edge behaves the same in both build modes, and says why.
+///
+/// **The guard throws; it does NOT trim the selection.** Silently dropping
+/// topics to fit is exactly the harm BANK-03 forbids for `question_count` and
+/// for the CEFR level — altering what the user asked for without telling them —
+/// applied to topics instead. A user who picked 40 topics and got questions from
+/// 30 of them has no way to discover that, and no way to explain the topics that
+/// never showed up.
+///
+/// **A multi-batch merge was considered and deliberately rejected**, and here is
+/// the reversal trigger so the call can be re-made rather than re-derived. The
+/// seeded bank has five subjects against a limit an order of magnitude larger,
+/// so batching would be unreachable code today, and this project's stated hard
+/// constraint is the leanest code with no speculative abstractions. If the bank
+/// ever grows past [kMaxTopicsPerQuery] DISTINCT subjects, batching stops being
+/// speculative and becomes required — and Phase 4's in-app JSON importer
+/// (IMPORT-01) is the thing that could do it. That is the phase that should
+/// build it, together with its own user-facing copy: the throw currently lands
+/// on the generic Start-failure helper, whose wording names the connection and
+/// is therefore imprecise for this one cause. That imprecision is accepted
+/// deliberately, and only because the branch is unreachable at the current bank
+/// size.
+const int kMaxTopicsPerQuery = 30;
+
+/// The ONE rule for whether a raw Firestore field value is usable, shared by
+/// both reads so the two can never drift into disagreeing about it.
+///
+/// Returns the trimmed text when [raw] is a `String` with non-whitespace
+/// content, and `null` otherwise — missing, wrong type, empty, or whitespace
+/// only. Being pure and free of Firestore types it is host-testable, which under
+/// D-47 is what makes this file's tests possible at all.
+///
+/// **What the callers do with the answer differs, on purpose.** A prompt is
+/// display text, so `questionsFor` uses the trimmed value. A subject is a QUERY
+/// KEY — the server-side `subject in [...]` compares exact strings — so
+/// `subjects` uses this only as the yes/no judgement and carries the RAW value
+/// forward. Trimming a subject here would hand the user a checkbox labelled
+/// `Travel` that matches the stored ` Travel` in nothing, which is the same
+/// class of silent mismatch [normalizeSubjects] refuses to case-fold for.
+String? sanitizedText(Object? raw) {
+  if (raw is! String) return null;
+  final trimmed = raw.trim();
+  return trimmed.isEmpty ? null : trimmed;
+}
+
 /// Turns the raw `subject` values of every document in the bank into the topic
 /// checkbox list (BANK-02).
 ///
@@ -103,12 +167,30 @@ class FirestoreQuestionSource implements QuestionSource {
   ///
   /// The read is this method's own; the three rules that turn raw values into
   /// checkboxes live in [normalizeSubjects], where they can be tested.
+  ///
+  /// A document whose `subject` is missing, not a `String`, or blank after
+  /// trimming is SKIPPED and logged — never rendered. A blank checkbox row is
+  /// unpickable and meaningless, and one bad row must not take out the whole
+  /// bank, so this skips rather than throws.
   @override
   Future<List<String>> subjects() async {
     final snapshot = await _read(_firestore.collection(kQuestionsCollection));
-    return normalizeSubjects(
-      snapshot.docs.map((doc) => doc.data()[_subjectField]),
-    );
+
+    final rawSubjects = <Object?>[];
+    for (final doc in snapshot.docs) {
+      final raw = doc.data()[_subjectField];
+      if (sanitizedText(raw) == null) {
+        debugPrint(
+          'Skipping question ${doc.id}: `$_subjectField` is missing, not a '
+          'string, or blank — it would render an unlabelled checkbox.',
+        );
+        continue;
+      }
+      // The RAW value, not the trimmed one — see [sanitizedText]. The checkbox
+      // label has to be the exact string the `whereIn` query will send back.
+      rawSubjects.add(raw);
+    }
+    return normalizeSubjects(rawSubjects);
   }
 
   /// This session's prompts: a GENUINE server-side filtered query (BANK-03).
@@ -126,8 +208,25 @@ class FirestoreQuestionSource implements QuestionSource {
   ///
   /// This query is what `firestore.indexes.json`'s composite index
   /// (`level`, `subject`, `created_at`, all ascending) exists for.
+  ///
+  /// A document whose `content` is missing, not a `String`, or blank after
+  /// trimming is SKIPPED and logged — a blank prompt would leave the user
+  /// staring at an empty question card while the countdown ran. As in
+  /// [subjects], one bad document must not take out the whole bank.
   @override
   Future<List<String>> questionsFor(SessionConfig config) async {
+    // A LOUD edge, checked before the query rather than left to the SDK: see
+    // [kMaxTopicsPerQuery] for the confirmed number, why the plugin's own assert
+    // is not enough, and why trimming the selection to fit is forbidden.
+    if (config.topics.length > kMaxTopicsPerQuery) {
+      debugPrint(
+        'Question bank query refused: ${config.topics.length} topics selected, '
+        'but Firestore allows at most $kMaxTopicsPerQuery values in a `whereIn` '
+        'clause. Failing loudly rather than dropping topics to fit (BANK-03).',
+      );
+      throw const QuestionBankUnavailableException();
+    }
+
     final snapshot = await _read(
       _firestore
           .collection(kQuestionsCollection)
@@ -138,9 +237,14 @@ class FirestoreQuestionSource implements QuestionSource {
 
     final prompts = <String>[];
     for (final doc in snapshot.docs) {
-      final content = doc.data()[_contentField];
-      if (content is! String) continue;
-      if (content.trim().isEmpty) continue;
+      final content = sanitizedText(doc.data()[_contentField]);
+      if (content == null) {
+        debugPrint(
+          'Skipping question ${doc.id}: `$_contentField` is missing, not a '
+          'string, or blank — it would render an empty question card.',
+        );
+        continue;
+      }
       prompts.add(content);
     }
     return prompts;

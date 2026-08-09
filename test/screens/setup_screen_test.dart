@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:englishreflex/data/questions.dart';
@@ -27,49 +28,98 @@ const List<String> _kTestSubjects = <String>[
   'Work & study',
 ];
 
-/// A scriptable [QuestionSource] — the seam D-47 puts every read state behind.
+/// The one scripted [QuestionSource] behind every read state D-47 puts behind
+/// the seam — loaded, empty, could-not-load and zero-result, for both reads.
 ///
-/// **Both methods complete synchronously** (`async` with no real `await`). That
-/// is deliberate and load-bearing for the same reason `_EmptyDatabaseHelper`
-/// exists: `testWidgets` runs on a fake clock that drains microtasks but never
-/// yields to the real event loop, so a `Future.delayed` here would never resolve
-/// and every test in this file would hang on a topics card that never fills.
-class _FakeQuestionSource implements QuestionSource {
-  _FakeQuestionSource({
-    this.bankSubjects = _kTestSubjects,
-    this.bankQuestions = const <String>['A fake prompt.'],
-  });
+/// **One class, not four.** Each read takes a list of per-call outcomes and the
+/// rule for reading them is a single sentence: *a `List<String>` is returned, an
+/// empty one being a server-confirmed empty read; anything else is thrown.* The
+/// last entry repeats once the script runs out, so a test that only cares about
+/// the first outcome writes one entry.
+///
+/// **Every method completes synchronously by default** (`async` with no real
+/// `await`). That is deliberate and load-bearing for the same reason
+/// `_EmptyDatabaseHelper` exists: `testWidgets` runs on a fake clock that drains
+/// microtasks but never yields to the real event loop, so a `Future.delayed`
+/// here would never resolve and every test in this file would hang on a topics
+/// card that never fills.
+///
+/// **[holdSubjects] / [holdQuestions] are the one exception, and they are how
+/// an in-flight frame becomes observable.** A held call parks on a [Completer]
+/// the test releases by hand, which stays inside the microtask queue the fake
+/// clock does drain — so "the spinner is on screen while the read is in flight"
+/// is a real assertion rather than a race with the harness.
+class FakeQuestionSource implements QuestionSource {
+  FakeQuestionSource({
+    List<Object>? subjectOutcomes,
+    List<Object>? questionOutcomes,
+    this.holdSubjects = false,
+    this.holdQuestions = false,
+  })  : subjectOutcomes = subjectOutcomes ?? <Object>[_kTestSubjects],
+        questionOutcomes =
+            questionOutcomes ?? <Object>[const <String>['A fake prompt.']];
 
-  final List<String> bankSubjects;
-  final List<String> bankQuestions;
+  final List<Object> subjectOutcomes;
+  final List<Object> questionOutcomes;
+  final bool holdSubjects;
+  final bool holdQuestions;
 
   /// Proves a re-read happened, and how many times.
   int subjectsCallCount = 0;
+  int questionsCallCount = 0;
 
-  @override
-  Future<List<String>> subjects() async {
-    subjectsCallCount++;
-    return bankSubjects;
+  /// Every config the Start query was actually issued with, in order — this is
+  /// what pins the tap-time snapshot against a mid-flight settings change.
+  final List<SessionConfig> configs = <SessionConfig>[];
+
+  Completer<void>? _subjectsGate;
+  Completer<void>? _questionsGate;
+
+  /// Lets a parked call proceed. A no-op when nothing is parked, so a test can
+  /// release unconditionally without racing the screen's own call ordering.
+  void releaseSubjects() {
+    final gate = _subjectsGate;
+    if (gate != null && !gate.isCompleted) gate.complete();
+  }
+
+  void releaseQuestions() {
+    final gate = _questionsGate;
+    if (gate != null && !gate.isCompleted) gate.complete();
+  }
+
+  static List<String> _resolve(List<Object> script, int callIndex) {
+    final outcome =
+        script[callIndex < script.length ? callIndex : script.length - 1];
+    if (outcome is List<String>) return outcome;
+    throw outcome;
   }
 
   @override
-  Future<List<String>> questionsFor(SessionConfig config) async =>
-      bankQuestions;
+  Future<List<String>> subjects() async {
+    final callIndex = subjectsCallCount++;
+    if (holdSubjects) {
+      await (_subjectsGate = Completer<void>()).future;
+    }
+    return _resolve(subjectOutcomes, callIndex);
+  }
+
+  @override
+  Future<List<String>> questionsFor(SessionConfig config) async {
+    final callIndex = questionsCallCount++;
+    configs.add(config);
+    if (holdQuestions) {
+      await (_questionsGate = Completer<void>()).future;
+    }
+    return _resolve(questionOutcomes, callIndex);
+  }
 }
 
-/// A source that fails the test if it is ever asked anything.
+/// The scripted "this read could not be served" outcome.
 ///
-/// Stands in for the production [FirestoreQuestionSource] in the one test that
-/// is about the seam itself rather than about the screen.
-class _ExplodingQuestionSource implements QuestionSource {
-  @override
-  Future<List<String>> subjects() async =>
-      throw StateError('the injected source must be the one that is used');
-
-  @override
-  Future<List<String>> questionsFor(SessionConfig config) async =>
-      throw StateError('the injected source must be the one that is used');
-}
+/// The production source's own signal, so scripting it is scripting exactly
+/// what `FirestoreQuestionSource` throws for a `FirebaseException` AND for the
+/// offline zero-documents-from-cache case.
+const Object _kUnreachable = QuestionBankUnavailableException();
 
 /// A database double with no engine behind it.
 ///
@@ -210,7 +260,7 @@ void main() {
     }
   });
 
-  Widget host({List<String>? subjects}) => MaterialApp(
+  Widget host({QuestionSource? source}) => MaterialApp(
         theme: _testTheme(),
         home: SetupScreen(
           databaseHelper: _EmptyDatabaseHelper(),
@@ -218,14 +268,12 @@ void main() {
               RecordingService(backend: _SilentRecorderBackend()),
           audioPlayerService:
               AudioPlayerService(backend: _SilentPlaybackBackend()),
-          // Injecting a whole source, not a subject list: the subject list moved
-          // behind the `QuestionSource` seam when Phase 3 sourced it from
-          // Firestore. Passing one here is also what proves production's
-          // `FirestoreQuestionSource` is never constructed under `flutter test`
-          // — see the `_ExplodingQuestionSource` test below.
-          questionSource: _FakeQuestionSource(
-            bankSubjects: subjects ?? _kTestSubjects,
-          ),
+          // A whole source, not a subject list: the subject list moved behind
+          // the `QuestionSource` seam when Phase 3 sourced it from Firestore,
+          // and a scriptable source is what lets one harness drive all four read
+          // outcomes. Passing one is also what proves production's
+          // `FirestoreQuestionSource` is never constructed under `flutter test`.
+          questionSource: source ?? FakeQuestionSource(),
         ),
       );
 
@@ -236,13 +284,13 @@ void main() {
   /// uses a REALISTIC surface instead — overflow is the whole point there.
   Future<void> pumpSetup(
     WidgetTester tester, {
-    List<String>? subjects,
+    QuestionSource? source,
     Size size = const Size(400, 2000),
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
-    await tester.pumpWidget(host(subjects: subjects));
+    await tester.pumpWidget(host(source: source));
     // TWO frames, not one. The subject list stopped being a compile-time
     // constant available on the first frame when Phase 3 sourced it from
     // Firestore: frame one lands before `_loadSubjects()`'s future has been
@@ -345,7 +393,10 @@ void main() {
 
     testWidgets('an empty subject list shows the locked empty state and '
         'keeps Start shut', (tester) async {
-      await pumpSetup(tester, subjects: const <String>[]);
+      await pumpSetup(
+        tester,
+        source: FakeQuestionSource(subjectOutcomes: <Object>[<String>[]]),
+      );
 
       expect(find.byKey(const Key('setup-topics-empty')), findsOneWidget);
       expect(find.text('No topics yet'), findsOneWidget);
@@ -358,26 +409,35 @@ void main() {
   group('SetupScreen reads its topics from the injected bank (BANK-02)', () {
     testWidgets('an injected source is the ONLY source consulted — the '
         'production Firestore one is never constructed', (tester) async {
-      // If `SetupScreen` ever built its own `FirestoreQuestionSource`, this test
-      // would fail on a missing Firebase app rather than on this source's throw
-      // — and either way it would fail, which is the point: no `flutter test`
-      // run may reach a Firestore handle.
+      // A source scripted to throw a plain `StateError`, which is NOT the seam's
+      // own signal. If `SetupScreen` ever built its own `FirestoreQuestionSource`
+      // instead of using the injected one, this test would fail on a missing
+      // Firebase app — and either way it fails, which is the point: no
+      // `flutter test` run may reach a Firestore handle.
+      final source = FakeQuestionSource(
+        subjectOutcomes: <Object>[
+          StateError('the injected source must be the one that is used'),
+        ],
+      );
       await tester.pumpWidget(
         MaterialApp(
           theme: _testTheme(),
           home: SetupScreen(
             databaseHelper: _EmptyDatabaseHelper(),
-            questionSource: _ExplodingQuestionSource(),
+            questionSource: source,
           ),
         ),
       );
       await tester.pump();
       await tester.pump();
 
-      // The injected source threw, that throw was contained and logged, and the
-      // screen is still standing — nothing reached the platform.
+      // The injected source was asked, its throw was contained and logged, and
+      // the screen is still standing — nothing reached the platform.
+      expect(source.subjectsCallCount, 1);
       expect(find.byKey(const Key('setup-start')), findsOneWidget);
-      expect(find.byKey(const Key('setup-topics-empty')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      // Anything that threw is could-not-load, whatever it threw.
+      expect(find.byKey(const Key('setup-topics-error')), findsOneWidget);
     });
 
     testWidgets('the checkboxes are exactly the bank\'s subjects, in the '
@@ -387,14 +447,18 @@ void main() {
       // the screen has one job and it is this one.
       await pumpSetup(
         tester,
-        subjects: normalizeSubjects(<Object?>[
-          'Travel',
-          'daily life',
-          'Travel', // an exact duplicate: one checkbox
-          '   ', // blank: no checkbox
-          null, // not a String: no checkbox
-          'Work & study',
-        ]),
+        source: FakeQuestionSource(
+          subjectOutcomes: <Object>[
+            normalizeSubjects(<Object?>[
+              'Travel',
+              'daily life',
+              'Travel', // an exact duplicate: one checkbox
+              '   ', // blank: no checkbox
+              null, // not a String: no checkbox
+              'Work & study',
+            ]),
+          ],
+        ),
       );
 
       // Case-insensitive sort puts 'daily life' first, before 'Travel'.
@@ -407,7 +471,12 @@ void main() {
 
     testWidgets('a single-subject bank renders one checkbox and ticking it '
         'opens Start', (tester) async {
-      await pumpSetup(tester, subjects: const <String>['Travel']);
+      await pumpSetup(
+        tester,
+        source: FakeQuestionSource(
+          subjectOutcomes: <Object>[<String>['Travel']],
+        ),
+      );
 
       expect(find.byType(CheckboxListTile), findsOneWidget);
       expect(startEnabled(tester), isFalse);
@@ -426,24 +495,10 @@ void main() {
       WidgetTester tester,
       List<String> questions,
     ) async {
-      tester.view.physicalSize = const Size(400, 2000);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: _testTheme(),
-          home: SetupScreen(
-            databaseHelper: _EmptyDatabaseHelper(),
-            recordingService:
-                RecordingService(backend: _SilentRecorderBackend()),
-            audioPlayerService:
-                AudioPlayerService(backend: _SilentPlaybackBackend()),
-            questionSource: _FakeQuestionSource(bankQuestions: questions),
-          ),
-        ),
+      await pumpSetup(
+        tester,
+        source: FakeQuestionSource(questionOutcomes: <Object>[questions]),
       );
-      await tester.pump();
-      await tester.pump();
     }
 
     testWidgets('the loop is handed exactly what the query returned, in the '
@@ -484,6 +539,534 @@ void main() {
       expect(tester.takeException(), isNull);
       // Nothing the user chose was lost on the way (D-38's standing rule).
       expect(startEnabled(tester), isTrue);
+    });
+  });
+
+  group('SetupScreen topics card — the four read states (D-37)', () {
+    /// How many of the four mutually exclusive bodies are on screen.
+    ///
+    /// The card is a deliberately TOTAL map, the same discipline
+    /// `kPhaseControlKeys` enforces on the practice screen: a topics state with
+    /// none of these present is a card that says nothing, and two at once is a
+    /// card that contradicts itself.
+    int statesPresent(WidgetTester tester) => <bool>[
+          find.byKey(const Key('setup-topics-loading')).evaluate().isNotEmpty,
+          find.byKey(const Key('setup-topics-empty')).evaluate().isNotEmpty,
+          find.byKey(const Key('setup-topics-error')).evaluate().isNotEmpty,
+          find.byType(CheckboxListTile).evaluate().isNotEmpty,
+        ].where((present) => present).length;
+
+    testWidgets('the first frame is loading, with Start shut and no helper',
+        (tester) async {
+      final source = FakeQuestionSource(holdSubjects: true);
+      tester.view.physicalSize = const Size(400, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(host(source: source));
+
+      expect(find.byKey(const Key('setup-topics-loading')), findsOneWidget);
+      expect(find.text('Loading your topics…'), findsOneWidget);
+      expect(statesPresent(tester), 1);
+      expect(startEnabled(tester), isFalse);
+      // Nothing to pick yet, so nothing tells the user to pick.
+      expect(find.byKey(const Key('setup-start-blocked')), findsNothing);
+
+      source.releaseSubjects();
+      await tester.pump();
+
+      expect(find.byKey(const Key('setup-topics-loading')), findsNothing);
+      expect(find.byType(CheckboxListTile),
+          findsNWidgets(_kTestSubjects.length));
+      expect(statesPresent(tester), 1);
+    });
+
+    testWidgets('a read that threw is could-not-load, and says NOTHING the '
+        'empty state says', (tester) async {
+      await pumpSetup(
+        tester,
+        source: FakeQuestionSource(subjectOutcomes: <Object>[_kUnreachable]),
+      );
+
+      expect(find.byKey(const Key('setup-topics-error')), findsOneWidget);
+      expect(find.text(kTopicsErrorMessage), findsOneWidget);
+      expect(find.byKey(const Key('setup-topics-error-retry')), findsOneWidget);
+      expect(find.text('Try again'), findsOneWidget);
+
+      // The negative half IS the requirement. Telling a user with a full bank
+      // and a flat connection that their topics are gone is the exact failure
+      // D-37 exists to prevent, so the empty state's key and its heading must
+      // both be absent — not merely "a different widget somewhere".
+      expect(find.byKey(const Key('setup-topics-empty')), findsNothing);
+      expect(find.text('No topics yet'), findsNothing);
+      expect(
+        find.text('Import some questions and your topics will show up here.'),
+        findsNothing,
+      );
+      expect(statesPresent(tester), 1);
+
+      // No exception detail leaked to the screen.
+      expect(find.textContaining('QuestionBankUnavailable'), findsNothing);
+      expect(startEnabled(tester), isFalse);
+      expect(find.byKey(const Key('setup-start-blocked')), findsNothing);
+    });
+
+    testWidgets('a server-confirmed empty bank is the empty state, and says '
+        'NOTHING the failure state says', (tester) async {
+      await pumpSetup(
+        tester,
+        source: FakeQuestionSource(subjectOutcomes: <Object>[<String>[]]),
+      );
+
+      expect(find.byKey(const Key('setup-topics-empty')), findsOneWidget);
+      expect(find.text('No topics yet'), findsOneWidget);
+
+      expect(find.byKey(const Key('setup-topics-error')), findsNothing);
+      expect(find.text(kTopicsErrorMessage), findsNothing);
+      expect(find.text('Try again'), findsNothing);
+      expect(statesPresent(tester), 1);
+
+      expect(startEnabled(tester), isFalse);
+      // Zero subjects: the pick-a-topic helper would be pointing at an empty
+      // card. This is the latent Phase 2 copy bug, fixed.
+      expect(find.byKey(const Key('setup-start-blocked')), findsNothing);
+    });
+
+    testWidgets('with subjects on screen and none checked, the pick-a-topic '
+        'helper IS present', (tester) async {
+      await pumpSetup(tester);
+
+      expect(find.byType(CheckboxListTile),
+          findsNWidgets(_kTestSubjects.length));
+      expect(find.byKey(const Key('setup-start-blocked')), findsOneWidget);
+      expect(statesPresent(tester), 1);
+    });
+
+    testWidgets('Try again re-issues the read and returns the card to loading '
+        'before it resolves', (tester) async {
+      final source = FakeQuestionSource(
+        subjectOutcomes: <Object>[_kUnreachable, _kTestSubjects],
+        holdSubjects: true,
+      );
+      await pumpSetup(tester, source: source);
+      source.releaseSubjects();
+      await tester.pump();
+
+      expect(find.byKey(const Key('setup-topics-error')), findsOneWidget);
+      expect(source.subjectsCallCount, 1);
+
+      await tester.tap(find.byKey(const Key('setup-topics-error-retry')));
+      await tester.pump();
+
+      expect(source.subjectsCallCount, 2);
+      // Loading replaces the failure immediately — and loading has no Retry
+      // button, so a second tap is structurally impossible rather than merely
+      // ignored.
+      expect(find.byKey(const Key('setup-topics-loading')), findsOneWidget);
+      expect(find.byKey(const Key('setup-topics-error')), findsNothing);
+      expect(statesPresent(tester), 1);
+
+      source.releaseSubjects();
+      await tester.pump();
+
+      expect(find.byType(CheckboxListTile),
+          findsNWidgets(_kTestSubjects.length));
+      expect(statesPresent(tester), 1);
+    });
+
+    testWidgets('a background refresh shows no spinner, and a failed one keeps '
+        'the last-known topics on screen (D-35)', (tester) async {
+      final source = FakeQuestionSource(
+        subjectOutcomes: <Object>[_kTestSubjects, _kUnreachable],
+        holdSubjects: true,
+      );
+      await pumpSetup(tester, source: source);
+      source.releaseSubjects();
+      await tester.pump();
+      expect(find.byType(CheckboxListTile),
+          findsNWidgets(_kTestSubjects.length));
+
+      // Leave Setup and come back — D-35's re-read, driven by the History push.
+      await tester.tap(find.byTooltip('Exercise History'));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      expect(source.subjectsCallCount, 2);
+      // In flight, and SILENT: replacing usable data with a spinner would
+      // flicker the checkboxes on every return from History.
+      expect(find.byKey(const Key('setup-topics-loading')), findsNothing);
+      expect(find.byType(CheckboxListTile),
+          findsNWidgets(_kTestSubjects.length));
+
+      source.releaseSubjects();
+      await tester.pump();
+
+      // It failed, and that changed nothing the user can see.
+      expect(find.byKey(const Key('setup-topics-error')), findsNothing);
+      expect(find.byType(CheckboxListTile),
+          findsNWidgets(_kTestSubjects.length));
+      expect(statesPresent(tester), 1);
+    });
+
+    testWidgets('a re-read that no longer lists a checked topic drops it from '
+        'the SELECTION, not just the screen', (tester) async {
+      final source = FakeQuestionSource(
+        subjectOutcomes: <Object>[
+          <String>['Daily life', 'Travel'],
+          <String>['Daily life'], // Travel left the bank between visits
+        ],
+      );
+      await pumpSetup(tester, source: source);
+
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.pump();
+      expect(startEnabled(tester), isTrue);
+
+      await tester.tap(find.byTooltip('Exercise History'));
+      await tester.pumpAndSettle();
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+
+      expect(source.subjectsCallCount, 2);
+      expect(find.byKey(const Key('setup-topic-Travel')), findsNothing);
+      // The reconciliation is the point: without it `Travel` survives in the
+      // selection, travels into `SessionConfig.topics`, and filters on a value
+      // that does not exist — a silent zero-result naming a topic the user
+      // cannot see to uncheck.
+      expect(startEnabled(tester), isFalse);
+      expect(find.byKey(const Key('setup-start-blocked')), findsOneWidget);
+    });
+  });
+
+  group('The Start footer — busy, zero-result, could-not-reach', () {
+    /// How many of the three helper lines are on screen.
+    ///
+    /// The slot is zero-or-one, never many: B3 and B4 cannot coexist because a
+    /// query either throws or returns and each tap replaces the last outcome,
+    /// and B2 cannot coexist with either because reaching a query at all
+    /// requires a checked topic.
+    int helpersPresent(WidgetTester tester) => <bool>[
+          find.byKey(const Key('setup-start-blocked')).evaluate().isNotEmpty,
+          find
+              .byKey(const Key('setup-start-no-questions'))
+              .evaluate()
+              .isNotEmpty,
+          find.byKey(const Key('setup-start-error')).evaluate().isNotEmpty,
+        ].where((present) => present).length;
+
+    /// The fill the button ACTUALLY paints, not the one it was handed.
+    ///
+    /// Resolving matters here: `FilledButton` paints `disabledBackgroundColor`
+    /// whenever `onPressed` is null, which is true of both the blocked and the
+    /// busy state — so only the resolved value can tell them apart.
+    Color? resolvedFill(WidgetTester tester, {bool disabled = true}) => tester
+        .widget<FilledButton>(find.byKey(const Key('setup-start')))
+        .style
+        ?.backgroundColor
+        ?.resolve(disabled ? <WidgetState>{WidgetState.disabled} : <WidgetState>{});
+
+    testWidgets('an in-flight query renders the busy button — no label, no '
+        'tap, and still coral', (tester) async {
+      final source = FakeQuestionSource(holdQuestions: true);
+      await pumpSetup(tester, source: source);
+
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('setup-start')));
+      await tester.pump();
+
+      expect(find.byKey(const Key('setup-start-busy')), findsOneWidget);
+      expect(find.text('START SESSION'), findsNothing);
+      // Null, not a swallowed tap: a double-Start is structurally impossible.
+      expect(startEnabled(tester), isFalse);
+      // An action IN FLIGHT must not look identical to an action BLOCKED.
+      expect(resolvedFill(tester), _testTheme().colorScheme.primary);
+      expect(resolvedFill(tester), isNot(_testTheme().colorScheme.surface));
+      // The button never changes size between states.
+      expect(
+        tester
+            .widget<SizedBox>(
+              find
+                  .ancestor(
+                    of: find.byKey(const Key('setup-start')),
+                    matching: find.byType(SizedBox),
+                  )
+                  .first,
+            )
+            .height,
+        64,
+      );
+      expect(helpersPresent(tester), 0);
+
+      source.releaseQuestions();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byType(PracticeScreen), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('a blocked button keeps the peach fill, so busy and blocked '
+        'are never the same picture', (tester) async {
+      await pumpSetup(tester);
+
+      expect(startEnabled(tester), isFalse);
+      expect(resolvedFill(tester), _testTheme().colorScheme.surface);
+      expect(find.text('START SESSION'), findsOneWidget);
+      expect(find.byKey(const Key('setup-start-busy')), findsNothing);
+    });
+
+    testWidgets('a zero-result query explains itself and costs the user '
+        'nothing (D-41 + D-38)', (tester) async {
+      await pumpSetup(
+        tester,
+        source: FakeQuestionSource(questionOutcomes: <Object>[<String>[]]),
+      );
+
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.tap(find.byKey(const Key('setup-level-C1')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('setup-start')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byKey(const Key('setup-start-no-questions')), findsOneWidget);
+      expect(find.text(noQuestionsMessage('C1', <String>['Travel'])),
+          findsOneWidget);
+      expect(helpersPresent(tester), 1);
+      // Not a failure: no icon, and the failure key is absent.
+      expect(find.byKey(const Key('setup-start-error')), findsNothing);
+      expect(find.byType(PracticeScreen), findsNothing);
+      // Nothing was reset, and the button is usable again.
+      expect(startEnabled(tester), isTrue);
+      expect(find.byKey(const Key('setup-start-busy')), findsNothing);
+    });
+
+    testWidgets('a failed query names the connection and preserves every '
+        'setting (D-38)', (tester) async {
+      await pumpSetup(
+        tester,
+        source: FakeQuestionSource(questionOutcomes: <Object>[_kUnreachable]),
+      );
+
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.tap(find.byKey(const Key('setup-topic-Work & study')));
+      await tester.tap(find.byKey(const Key('setup-level-A2')));
+      await tester.pump();
+      await tester.drag(
+        find.byKey(const Key('setup-count-slider')),
+        const Offset(-1000, 0),
+      );
+      await tester.drag(
+        find.byKey(const Key('setup-thinking-slider')),
+        const Offset(1000, 0),
+      );
+      await tester.drag(
+        find.byKey(const Key('setup-answer-slider')),
+        const Offset(-1000, 0),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('setup-start')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byKey(const Key('setup-start-error')), findsOneWidget);
+      expect(find.text(kQuestionLoadErrorMessage), findsOneWidget);
+      expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+      expect(helpersPresent(tester), 1);
+      expect(find.byKey(const Key('setup-start-no-questions')), findsNothing);
+
+      // No route was pushed.
+      expect(find.byType(PracticeScreen), findsNothing);
+
+      // A failure never costs the user their setup.
+      for (final level in kLevels) {
+        expect(
+          tester.widget<ChoiceChip>(find.byKey(Key('setup-level-$level')))
+              .selected,
+          level == 'A2',
+          reason: '$level after a failed Start query',
+        );
+      }
+      for (final subject in <String>['Travel', 'Work & study']) {
+        expect(
+          tester
+              .widget<CheckboxListTile>(find.byKey(Key('setup-topic-$subject')))
+              .value,
+          isTrue,
+        );
+      }
+      expect(
+        tester.widget<Text>(find.byKey(const Key('setup-count-readout'))).data,
+        '1',
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('setup-thinking-readout')))
+            .data,
+        '30 sec',
+      );
+      expect(
+        tester.widget<Text>(find.byKey(const Key('setup-answer-readout'))).data,
+        '10 sec',
+      );
+
+      // And no exception text reached the screen.
+      expect(find.textContaining('QuestionBankUnavailable'), findsNothing);
+    });
+
+    testWidgets('changing a topic, the level or a slider clears the last '
+        "attempt's helper", (tester) async {
+      Future<void> failStart(WidgetTester tester, FakeQuestionSource s) async {
+        await tester.tap(find.byKey(const Key('setup-start')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+      }
+
+      final source =
+          FakeQuestionSource(questionOutcomes: <Object>[_kUnreachable]);
+      await pumpSetup(tester, source: source);
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.pump();
+
+      // The level.
+      await failStart(tester, source);
+      expect(find.byKey(const Key('setup-start-error')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('setup-level-C2')));
+      await tester.pump();
+      expect(helpersPresent(tester), 0);
+
+      // A slider.
+      await failStart(tester, source);
+      expect(find.byKey(const Key('setup-start-error')), findsOneWidget);
+      await tester.drag(
+        find.byKey(const Key('setup-count-slider')),
+        const Offset(-1000, 0),
+      );
+      await tester.pump();
+      expect(helpersPresent(tester), 0);
+
+      // A topic — and unchecking the last one hands the slot back to the
+      // blocked helper rather than leaving two messages behind.
+      await failStart(tester, source);
+      expect(find.byKey(const Key('setup-start-error')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.pump();
+      expect(find.byKey(const Key('setup-start-blocked')), findsOneWidget);
+      expect(helpersPresent(tester), 1);
+    });
+
+    testWidgets('the tap-time SessionConfig wins over a level changed '
+        'mid-flight', (tester) async {
+      final source = FakeQuestionSource(holdQuestions: true);
+      await pumpSetup(tester, source: source);
+
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.tap(find.byKey(const Key('setup-level-B2')));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('setup-start')));
+      await tester.pump();
+      expect(find.byKey(const Key('setup-start-busy')), findsOneWidget);
+
+      // The controls stay interactive during the busy frame — deliberately, no
+      // invisible disabling and no overlay.
+      await tester.tap(find.byKey(const Key('setup-level-C2')));
+      await tester.pump();
+
+      source.releaseQuestions();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // The query ran with the level the user had chosen when they tapped. The
+      // mid-flight change belongs to the NEXT Start.
+      expect(source.configs.single.level, 'B2');
+      expect(
+        tester.widget<PracticeScreen>(find.byType(PracticeScreen)).config.level,
+        'B2',
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('at most one helper line, in each of the three states that '
+        'produce one', (tester) async {
+      final source = FakeQuestionSource(
+        questionOutcomes: <Object>[<String>[], _kUnreachable],
+      );
+      await pumpSetup(tester, source: source);
+
+      // Nothing selected.
+      expect(find.byKey(const Key('setup-start-blocked')), findsOneWidget);
+      expect(helpersPresent(tester), 1);
+
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.pump();
+      expect(helpersPresent(tester), 0);
+
+      // After a zero result.
+      await tester.tap(find.byKey(const Key('setup-start')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const Key('setup-start-no-questions')), findsOneWidget);
+      expect(helpersPresent(tester), 1);
+
+      // After a failure — the previous outcome is REPLACED, never accumulated.
+      await tester.tap(find.byKey(const Key('setup-start')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const Key('setup-start-error')), findsOneWidget);
+      expect(helpersPresent(tester), 1);
+    });
+
+    testWidgets('the resting ready state is one button and nothing else',
+        (tester) async {
+      await pumpSetup(tester);
+
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.pump();
+
+      expect(startEnabled(tester), isTrue);
+      expect(
+        resolvedFill(tester, disabled: false),
+        _testTheme().colorScheme.primary,
+      );
+      expect(find.text('START SESSION'), findsOneWidget);
+      expect(helpersPresent(tester), 0);
+    });
+  });
+
+  group('noQuestionsMessage (D-41 copy)', () {
+    test('one topic names that topic and the level', () {
+      expect(
+        noQuestionsMessage('C2', <String>['Travel']),
+        'No C2 questions in Travel yet. '
+        'Try another level, or pick more topics.',
+      );
+    });
+
+    test('two topics are joined with OR, because the query is a disjunction',
+        () {
+      expect(
+        noQuestionsMessage('C2', <String>['Travel', 'Food & health']),
+        'No C2 questions in Travel or Food & health yet. '
+        'Try another level, or pick more topics.',
+      );
+    });
+
+    test('three or more names the COUNT, so the non-scrolling footer stays '
+        'length-bounded', () {
+      expect(
+        noQuestionsMessage('C2', <String>[
+          'Travel',
+          'Food & health',
+          'Daily life',
+          'Work & study',
+        ]),
+        'No C2 questions in any of your 4 topics yet. '
+        'Try another level, or pick different topics.',
+      );
     });
   });
 
@@ -752,7 +1335,7 @@ void main() {
             data: const MediaQueryData(textScaler: TextScaler.linear(2.0)),
             child: SetupScreen(
               databaseHelper: _EmptyDatabaseHelper(),
-              questionSource: _FakeQuestionSource(),
+              questionSource: FakeQuestionSource(),
             ),
           ),
         ),
