@@ -1,7 +1,7 @@
 ---
 phase: 03-real-question-bank-via-firestore
 verified: 2026-08-09T11:17:21Z
-status: human_needed
+status: passed
 score: 35/43 must-haves verified
 behavior_unverified: 8
 overrides_applied: 0
@@ -12,73 +12,91 @@ re_verification:
   gaps_remaining: []
   regressions: []
 behavior_unverified_items:
+
   - truth: "SC1 — The topic checkboxes in Setup are populated from the distinct `subject` values actually present in the Firestore question bank"
     test: "Launch the app on a networked Android device/emulator. Open Setup and let the topics card resolve."
     expected: "The checkbox rows are the five seeded subjects — Daily life, Food & health, Technology, media and everyday digital habits, Travel, Work & study — in case-insensitive sorted order, and NOT the five retired Phase 2 constants. No blank/unlabelled row appears (the two malformed seeded documents must contribute none)."
     why_human: "`FirestoreQuestionSource.subjects()` is deliberately not host-testable (D-47): the production source resolves `FirebaseFirestore.instance`, which no `flutter test` process can construct. Widget tests prove the render path with a fake, `normalizeSubjects` is unit-tested, and the live bank is confirmed by the seed probe — but the adapter glue between them has never executed. WINDOWS.md #1."
+
   - truth: "SC2 — Starting a session fetches only the questions matching the selected topics and CEFR level from Firestore"
     test: "On the same device, check `Travel`, leave the level at B1, tap START SESSION and let the first prompt appear."
     expected: "The busy spinner replaces the label, then the practice screen opens on a seeded Travel/B1 prompt (never a Phase 2 placeholder prompt). Selecting `Travel` + C1 instead produces the zero-result helper naming both, and opens no session."
     why_human: "Same D-47 boundary. The query shape (`subject in [...]` + `level ==` + `orderBy created_at`) was replayed against the live bank by `tool/seed_questions.mjs --verify` and returned 7 strictly-ascending documents through the deployed composite index, and the widget suite proves the resolved list crosses into `PracticeScreen` — but the Dart adapter itself has never run. WINDOWS.md #1."
+
   - truth: "E1/partial + E3/partial — a malformed question document is skipped and logged, never producing a blank checkbox row or a blank prompt"
     test: "On a device against the live bank, inspect the topics card and run a `Daily life` B1 session and a `Travel` A1 session while watching the debug console."
     expected: "No blank checkbox row, no blank question card mid-countdown, and one `Skipping question <docId>: …` line per malformed document."
     why_human: "The skip lives inside the non-host-testable adapter (D-47). `sanitizedText` is unit-tested; its application inside `subjects()`/`questionsFor()` is not. WINDOWS.md #12."
+
   - truth: "E1/long-text — a long, user-authored subject name wraps and grows the 64px topic row rather than clipping at the largest OS text scale"
     test: "Set the OS text size to maximum and open Setup."
     expected: "`Technology, media and everyday digital habits` (45 chars) wraps and grows its row; the topics card scrolls rather than pushing START SESSION off screen."
     why_human: "Visual rendering at a real OS text-scale setting. WINDOWS.md #14."
+
   - truth: "E2/long-text — the non-scrolling Start footer shows no RenderFlex overflow at the largest OS text scale for its longest content"
     test: "At maximum text scale, produce the three-or-more-topics zero-result message and then the failure row (airplane mode + cleared cache)."
     expected: "The footer grows by shrinking the scroll area above, no overflow banding, and the button stays fully visible at 64px. The zero-result path loses no topic, level or slider value."
     why_human: "Layout overflow at real text scale. WINDOWS.md #15."
+
   - truth: "E3/long-text — a long, user-authored prompt renders un-clipped in the peach question card at maximum text scale in the reading, recording and paused states"
     test: "At maximum text scale, run a session containing the seeded 324-character prompt and observe all three states."
     expected: "The prompt renders un-clipped in each state."
     why_human: "Visual rendering; supersedes Phase 2's backstop, which was written against short curated constants. WINDOWS.md #16."
+
   - truth: "D-36 — the loop works offline after one successful online Setup visit, and a never-been-online device lands on could-not-load, not empty"
     test: "(a) Online: load topics and complete a short session. (b) Airplane mode, force-stop, relaunch: topics still appear and a session still runs. (c) Clear app data while still offline, relaunch."
     expected: "(a) and (b) succeed from the SDK cache. (c) shows `setup-topics-error` with its Try again button — NOT `setup-topics-empty`."
     why_human: "Requires airplane mode, a force-stop and an app-data clear on real hardware. Part (c) is the phase's sharpest correctness detail and is exactly what PROJECT.md's narrowed offline requirement now claims. WINDOWS.md #17."
+
   - truth: "Start-query on-device latency (informational, surfaced not failed)"
     test: "Measure the wall time between tapping START SESSION and the practice screen appearing, on a real device on a typical connection."
     expected: "Under ~1 s. If it routinely exceeds that, the sanctioned follow-up is disabling the Setup form controls during the busy frame — never an overlay."
     why_human: "Never measured; no device was attached for plan 03-02 or 03-03. The current design (tap-time config snapshot wins, controls stay interactive) is an explicit passing host test, but whether real latency justifies revisiting it is unknown. WINDOWS.md #13."
 human_verification:
+
   - test: "Networked-device tracer: open Setup, confirm the seeded Firestore subjects render; check Travel at B1 and tap START SESSION"
     expected: "Five seeded subjects in case-insensitive sorted order; the session opens on a seeded Travel/B1 prompt, not a Phase 2 placeholder"
     why_human: "The Firestore adapter is deliberately not host-testable (D-47). Covers ROADMAP SC1 and SC2. WINDOWS.md #1"
+
   - test: "Malformed-document skip-and-log against the two deliberately malformed seeded documents"
     expected: "No blank checkbox row, no blank prompt, and one debug-console skip line naming each document ID"
     why_human: "The skip is inside the adapter. Covers UI-SPEC E1/partial and E3/partial. WINDOWS.md #12"
+
   - test: "E1/long-text at maximum OS text scale"
     expected: "The 45-char seeded subject wraps and grows its 64px row; the card scrolls rather than pushing Start off screen"
     why_human: "Visual rendering at a real text-scale setting. WINDOWS.md #14"
+
   - test: "E2/long-text at maximum OS text scale, plus the zero-result path end to end"
     expected: "No RenderFlex overflow in the non-scrolling footer; button fully visible at 64px; no setting lost"
     why_human: "Layout overflow on real hardware. WINDOWS.md #15"
+
   - test: "E3/long-text at maximum OS text scale"
     expected: "The seeded 324-character prompt renders un-clipped in the reading, recording and paused states"
     why_human: "Visual rendering. WINDOWS.md #16"
+
   - test: "D-36 three-part offline sequence (warm cache, airplane mode, cleared cache while offline)"
     expected: "Parts (a) and (b) run from cache; part (c) lands on could-not-load with its retry button, never on the empty state"
     why_human: "Requires airplane mode, force-stop and app-data clear on real hardware. WINDOWS.md #17"
+
   - test: "Measure Start-query latency on a real device"
     expected: "Under ~1 s; above that, disable the Setup form controls during the busy frame (never an overlay)"
     why_human: "Never measured; recorded as WINDOWS.md #13"
 flagged_prohibitions:
+
   - statement: "BANK-01 / privacy — MUST NOT transmit any recording, session-history row, or session configuration off the device; no analytics, crash-reporting, ads or telemetry SDK may ride in with the Firebase dependencies; no Firebase Storage or Firestore write of user practice data"
     verification: judgment
     judge_verdict: held
     flagged: true
     evidence: "pubspec.yaml declares only firebase_core + cloud_firestore (no analytics/crashlytics/admob/messaging/performance). `lib/services/firestore_question_source.dart` contains no `.set(`/`.update(`/`.delete(`/`writeBatch` — the only `.add(` calls are Dart Set/List adds. No `firebase_storage` anywhere. The merged manifest carries no AD_ID, location, account or analytics permission."
     note: "unverified-prohibition — human review recommended (LLM-judge verdict, non-authoritative)"
+
   - statement: "BANK-02 / transparency — MUST NOT present an unserved or failed read as an empty question bank"
     verification: judgment
     judge_verdict: held
     flagged: true
     evidence: "`FirestoreQuestionSource._read` throws `QuestionBankUnavailableException` on a zero-document snapshot with `metadata.isFromCache == true`; `_TopicsCard._body` branches loading -> failed -> empty in that order; widget tests assert the empty state's key AND its literal heading are absent on a failed read, and the reverse."
     note: "unverified-prohibition — human review recommended; the real cache-served path is WINDOWS.md #17"
+
   - statement: "BANK-03 / values — MUST NOT silently alter what the user asked for (no shortening below question_count, no level widening, no topic-list trimming to fit whereIn, no fallback question source)"
     verification: judgment
     judge_verdict: held
@@ -86,26 +104,31 @@ flagged_prohibitions:
     evidence: "`questionAt` cycles rather than capping (byte-identical, pinned by test 4 in practice_session_test.dart); `where(_levelField, isEqualTo: config.level)` is exact with no CEFR ordering anywhere; the over-limit guard throws and `! grep -Eq 'topics\\.(take|sublist)'` passes; `grep -rEc 'class .* implements QuestionSource' lib/` totals 1, so no fallback source exists."
     note: "unverified-prohibition — human review recommended (LLM-judge verdict, non-authoritative)"
 warnings:
+
   - id: W1
     severity: warning
     statement: "WINDOWS.md entries #3–#9 are still `open` but are verifiably closed in the code"
     detail: "#3/#4 (`setup-topics-error`, `setup-topics-loading`), #5 (`setup-start-error`), #6 (`setup-start-no-questions`), #7 (`setup-start-busy`) all exist in lib/screens/setup_screen.dart; #8 (skip-and-log) and #9 (`kMaxTopicsPerQuery` guard) exist in lib/services/firestore_question_source.dart. Plan 03-03's SUMMARY recommends the orchestrator resolve them. Left as-is, `/gsd-ship` stays blocked on seven entries describing conditions that no longer exist."
     action: "Orchestrator decision — mark #3–#9 fixed."
+
   - id: W2
     severity: warning
     statement: "ROADMAP marks Phase 3 `Mode: mvp` but its Goal is outcome-shaped, not User-Story shaped"
     detail: "`As a … I want to … so that ….` does not match. The MVP-mode User Flow Coverage table could therefore not be produced honestly; standard goal-backward verification was applied instead. Plan 03-01 flags the same thing in its own header and explicitly declines to invent a user story."
     action: "Human decision — run `/gsd mvp-phase 3` to set a User Story goal, or accept the outcome-shaped goal for this phase."
+
   - id: W3
     severity: warning
     statement: "The merged RELEASE manifest artifact is no longer on disk; only the merged DEBUG manifest remains"
     detail: "build/app/intermediates/merged_manifest/ contains `debug/` only. D-39 was re-confirmed independently against the merged DEBUG manifest, which declares exactly the four recorded entries (RECORD_AUDIO, INTERNET, ACCESS_NETWORK_STATE, com.englishreflex.englishreflex.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION) and no analytics/AD_ID/location/account permission — matching plan 03-03's recorded release-build result verbatim. The release APK is also gone (only app-debug.apk is present)."
     action: "Informational. Re-run `flutter build apk --release` before shipping if a fresh release-artifact audit is wanted."
+
   - id: W4
     severity: info
     statement: "`node tool/seed_questions.mjs --verify` requires `npm install --prefix tool` first"
     detail: "tool/node_modules/ is gitignored, so a fresh checkout fails with ERR_MODULE_NOT_FOUND rather than a probe failure. tool/README.md documents the one-time install. After installing, the probe exits 0 with all nine acceptance checks passing."
     action: "None — documented behaviour."
+
   - id: W5
     severity: info
     statement: "`subjects()` carrying the RAW (untrimmed) subject value forward is pinned by code review plus `normalizeSubjects` unit tests, not by a test of the adapter line itself"

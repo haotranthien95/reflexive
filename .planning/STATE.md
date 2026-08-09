@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 03
-current_phase_name: real-question-bank-via-firestore
-status: executing
-stopped_at: Phase 3 UI-SPEC approved
-last_updated: "2026-08-09T07:39:38.653Z"
+current_phase: 4
+current_phase_name: Bulk Import, Seed Content & Screen Polish
+status: planning
+stopped_at: Phase 3 complete (UAT 7/7 passed), ready to plan Phase 4
+last_updated: "2026-08-09T18:35:00.000Z"
 last_activity: 2026-08-09
-last_activity_desc: Phase 03 execution started
+last_activity_desc: Phase 03 UAT passed 7/7, phase complete, transitioned to Phase 4
 progress:
-  total_phases: 3
-  completed_phases: 2
+  total_phases: 4
+  completed_phases: 3
   total_plans: 14
-  completed_plans: 11
+  completed_plans: 14
 ---
 
 # Project State
@@ -23,22 +23,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-08-09)
 
 **Core value:** The user can drill spoken English under real time pressure (timed prompt → forced recording → auto-advance) and can always go back and listen to exactly what they said on any past question.
-**Current focus:** Phase 03 — real-question-bank-via-firestore
+**Current focus:** Phase 4 — Bulk Import, Seed Content & Screen Polish
 
 ## Current Position
 
-Phase: 03 (real-question-bank-via-firestore) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 03
-Last activity: 2026-08-09 — Phase 03 execution started
+Phase: 4 — Bulk Import, Seed Content & Screen Polish
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-08-09 — Phase 03 UAT passed 7/7, phase complete, transitioned to Phase 4
 
-Progress: [████████████████████] 11/11 plans (100%) — Phases 1-2 of 4 complete
+Progress: [████████████████████] 14/14 plans (100%) — Phases 1-3 of 4 complete
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 11
+- Total plans completed: 14
 - Average duration: - min
 - Total execution time: 0 hours
 
@@ -48,6 +48,7 @@ Progress: [████████████████████] 11/11 p
 |-------|-------|-------|----------|
 | 01 | 6 | - | - |
 | 02 | 5 | - | - |
+| 03 | 3 | - | - |
 
 **Recent Trend:**
 
@@ -69,8 +70,11 @@ Recent decisions affecting current work:
 - [Phase 1]: Baloo 2 is a bundled asset with runtime fetching off; the app makes no outbound request. Phase 3 adds Firestore and will be the first thing to need network.
 - [Phase 2]: `PlaceholderQuestionSource` (`lib/data/questions.dart`) is the documented Phase 3 swap seam — replacing it with the Firestore-backed source is the core of Phase 3, and SETUP-01 (topics = distinct `subject` values) rides on it.
 - [Phase 2]: An OS interruption parks the session paused and commits the partial answer; it never auto-resumes recording. Phase 3's network fetch must not re-enter the loop in a way that bypasses this.
-- [Phase 2]: The release build carries `RECORD_AUDIO` as its only permission. Phase 3 adds Firestore and will be the first change to require `INTERNET` in the release manifest — a deliberate, documented departure from the current no-network posture.
-- [Roadmap]: Topics derived from Firestore `subject` values are deferred to Phase 3 — Phases 1-2 build against placeholder topic data so crash-safety and timer precision aren't coupled to Firebase wiring.
+- [Phase 3]: The placeholder bank is **deleted**, not kept as a fallback (D-36) — `lib/data/questions.dart` holds only the `QuestionSource` seam and `FirestoreQuestionSource`; test data lives in `test/fixtures/questions.dart`. Phase 4's importer must not reintroduce a second in-app bank.
+- [Phase 3]: A session's questions are resolved on **Setup** and handed to the loop as a plain `List<String>` (D-33/D-34). `PracticeState` holds no `QuestionSource`. Phase 4's import flow must keep the fetch on Setup — there is no network path out of the practice screen and it should stay that way.
+- [Phase 3]: The per-session fetch is a real server-side query — `subject in […]` + `level ==` + `orderBy created_at` — behind the composite index in `firestore.indexes.json` (D-32). `whereIn` caps at 30 values, guarded explicitly by `kMaxTopicsPerQuery`. Phase 4's seeding must keep the index deployed (`firebase deploy --only firestore:rules,firestore:indexes`).
+- [Phase 3]: Firestore rules are deployed **from the repo** (`firestore.rules`), never edited in the console — a console edit is invisible to review and is overwritten by the next deploy. Phase 4's in-app importer writes through these same open rules.
+- [Phase 3]: A read failure and an empty bank are different states with different copy and different affordances; a cache-served zero-document read is unreachable, not empty. Verified end-to-end in UAT test 6. Phase 4's import result messaging should follow the same rule.
 
 ### Pending Todos
 
@@ -78,10 +82,12 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 3]: Adding Firestore introduces the app's first network dependency and the first `INTERNET` permission in the release build. The loop must stay usable offline — decide where the question fetch happens (setup only, never mid-loop) before planning.
-- [Phase 3]: Firestore rules will be open (no auth) by design. This is an accepted single-user tradeoff, but it must be written down in the phase that sets the rules, not left implicit.
+- [Phase 4]: A device that has never been online has an empty Firestore cache and **cannot start a session** — this is the accepted, documented narrowing of the offline promise (D-39/D-36). Phase 4 seeds the starter content; if seeding is expected to make a fresh install usable offline, that is a different mechanism (bundled seed JSON) and a new decision, not something the current design delivers.
+- [Phase 4]: The open `questions` rules allow unauthenticated **write**. Phase 4's in-app importer is the first client-side writer through them, which is exactly the exposure D-46 accepted — no new decision needed, but the importer should not widen the surface further (no new collections, no rule relaxation).
 
 _Resolved in Phase 2:_ the iOS `AudioInterruptionMode` `-10868` risk was settled by a real-device answered-call test (D-31), and the `arming` window question was resolved by the countdown absorbing it.
+
+_Resolved in Phase 3:_ both Phase 3 concerns are discharged. The network-dependency concern was answered by D-33/D-34 (both reads on Setup, none inside the loop) and verified on-device by UAT test 6; the open-rules concern was written down in full in `firestore.rules`, PROJECT.md Key Decisions (D-46) and CLAUDE.md, rather than left implicit.
 
 ## Deferred Items
 
@@ -95,6 +101,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-09T06:44:10.645Z
-Stopped at: Phase 3 UI-SPEC approved
-Resume file: .planning/phases/03-real-question-bank-via-firestore/03-UI-SPEC.md
+Last session: 2026-08-09
+Stopped at: Phase 3 complete (UAT 7/7 passed, verification passed), ready to plan Phase 4
+Resume file: None
