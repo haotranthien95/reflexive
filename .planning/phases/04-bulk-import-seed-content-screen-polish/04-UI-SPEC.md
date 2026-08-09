@@ -1,10 +1,11 @@
 ---
 phase: 4
 slug: bulk-import-seed-content-screen-polish
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-08-09
+reviewed_at: 2026-08-09
 ---
 
 # Phase 4 — UI Design Contract
@@ -788,19 +789,29 @@ Shape-rooted state coverage from the UI-consideration probe over the surfaces th
 changes. Element kinds were confirmed rather than left to the prose heuristic. Empty- and error-state
 *copy* lives in `## Copywriting Contract`; the rows below reference it rather than restating it.
 
-**Coverage: 27 applicable — 22 ✅ covered, 5 🧪 backstop, 0 ⚠ unresolved** (plus 1 interaction race
-tracked as ⚠ unresolved in the Interaction Contract above, and 4 categories explicitly dismissed on E6).
+**Coverage: 44 rows — 36 ✅ covered, 4 🧪 backstop, 4 — dismissed, 0 ⚠ unresolved** (plus 1 interaction
+race tracked as ⚠ unresolved in the Interaction Contract above).
 
 *Element kinds: E1 `nav + interactive-control`; E2 `interactive-control + static-content`; E3
 `static-content`; E4 `list-collection`; E5 `form + interactive-control`; E6 `list-collection`. Zero
 `unclassified` candidates.*
 
+**Provenance.** The engine (`ui-consideration-probe.cjs`) raised **43** applicable categories over these
+six elements; row 44 (`E3 long-text`) is an author-added row the engine did not raise and is kept because
+it records a real bound. The first authoring pass addressed 31 of the 43 — the 13 rows marked
+**`[probe]`** below were raised by the engine, found missing, and resolved in this post-verification pass.
+Every one resolved to ✅ from facts already fixed by the approved Layout and Interaction Contracts; none
+required a new decision, and none changed a token, a string or a state. That is the expected outcome for
+a spec that passed all six checker dimensions — the probe's job here was recall, not correction.
+
 ### E1 — Setup AppBar with two actions (nav + interactive-control)
 
 | Category | Status | Resolution |
 |----------|--------|------------|
+| empty | ✅ covered `[probe]` | The AppBar's `actions:` list is a **fixed two-entry literal**, never data-driven. It cannot render with zero actions for any bank state, network state or import outcome, so there is no zero-item shape to design. This is the reason the action is specified as a literal rather than built from a list |
 | loading | ✅ covered | The import action has **no loading state and never disables** — every in-flight state lives inside the sheet, which has room to caption it. Tapping is instant; the sheet opens on S1 before any I/O |
 | error | ✅ covered | No failure is reachable on tap. Every import failure renders inside the sheet (S5/S6/S7/S8), never as a snackbar — snackbars vanish and are unrecoverable, the objection that already ruled them out in D-37 and D-62 |
+| populated | ✅ covered `[probe]` | Exactly **two** actions, both always enabled, neither conditional on data. The populated shape has one form only. The order rule (import **prepended**, History last) is what keeps that shape stable as actions accrue: a new action never displaces the one the thumb already knows |
 | overflow | 🧪 backstop | **New risk this phase:** the title now competes with **two** 48px actions instead of one. Verify "EnglishReflex" at Heading 24 does not overflow at the largest OS text-scale setting with both actions present, and that it ellipsises rather than throwing a `RenderFlex` — matching the Practice AppBar's existing treatment |
 | long-text | ✅ covered | Both actions are icon-only with tooltips, so neither grows with the text scale (the Phase 2 precedent for the Pause/Stop actions) |
 
@@ -808,16 +819,26 @@ tracked as ⚠ unresolved in the Interaction Contract above, and 4 categories ex
 
 | Category | Status | Resolution |
 |----------|--------|------------|
+| empty | ✅ covered `[probe]` | The sheet has no empty state of its own, and that is deliberate: **S1 idle is its zero-data shape and is not blank** — it carries the shape example and the primary CTA, which is the whole reason D-50 opens the sheet *before* the picker. A file containing zero questions is a different fact and renders **S6**, which gets the app's empty-state treatment (Heading + Body, no icon, no red) rather than its failure treatment. Copy in `## Copywriting Contract` |
 | loading | ✅ covered | Two captioned states: **S2** indeterminate coral spinner + "Checking your file…" / "Comparing with your bank…", and **S3** determinate coral bar + "Saving {n} questions to your bank…" + "Keep this open until it finishes." No busy state is ever an uncaptioned spinner. S3 is the only non-dismissible state |
 | error | ✅ covered | Four distinct terminal failure surfaces with four distinct keys and four distinct messages: **S5** file problem (two sub-messages — unreadable vs. wrong shape, because a shape hint would be a false explanation for a file that never opened), **S6** file empty (empty-state treatment, no red), **S7** bank unreachable ("nothing was imported"), **S8** partial write (exact counts + a safe recovery). Red marks the icon, brown carries the words |
+| populated | ✅ covered `[probe]` | **S4** is the sheet's populated shape and the only state that grows with data. The eight states are mutually exclusive by a single state key, so a populated sheet can never render a busy affordance or an error icon beside its summary — the totality discipline `kPhaseControlKeys` already enforces on the practice screen, applied to the sheet |
+| partial | ✅ covered `[probe]` | **S8** is a first-class terminal state, not a degraded S4: its own key, its own message, exact counts, and a re-import recovery that is safe **because** D-54 dedupes against the bank. It is the one place a partial write survives D-52's validate-everything-first design, and rendering it as a success-shaped peach card would be the exact misreport IMPORT-04 forbids |
 | overflow | ✅ covered | `isScrollControlled: true` + `SingleChildScrollView` + a 90%-height cap. The sheet sizes to its state and scrolls; the primary button lives at the bottom of the scrolling column, so it is reachable at any text scale. No nested scrollable inside the sheet |
+| zero-one-many | ✅ covered `[probe]` | The sheet's own chrome does not vary by count — all count-varying content is delegated to **E3** (summary lines, singular/plural pure functions) and **E4** (skip rows). The single sheet-level consequence of "many" is height, and it is discharged by the `overflow` row above: the sheet scrolls rather than pushing its primary button off-screen |
 | long-text | 🧪 backstop | The **JSON shape example** is the phase's tightest line. It renders at Body 16/400 in a proportional font (no monospace family is introduced) with `softWrap: true`. Verify it wraps legibly rather than clipping on the narrowest supported device at the largest text scale, and that the peach card grows with it |
 
 ### E3 — Result summary card (static-content)
 
 | Category | Status | Resolution |
 |----------|--------|------------|
+| empty | ✅ covered `[probe]` | The duplicate and skipped lines are **zero-suppressed independently**, so the card's minimum shape is **one line** ("85 questions added") — never "0 were already in your bank", never an empty container. A card with *zero* lines is unreachable: S4 is only entered after a completed write, and a completed write of zero rows cannot happen because a zero-question file lands on **S6** before any write is attempted |
+| loading | ✅ covered `[probe]` | None of its own — owned entirely by S2/S3. The card is built from an already-complete in-memory report and mounts only on the transition into S4, so it can never render half-populated or with a placeholder count |
+| error | ✅ covered `[probe]` | None of its own. A file-level or bank-level failure renders S5/S6/S7 and **never a summary card**. S8 carries its counts inside its own message string rather than reusing this card — deliberately, so a partial write is never dressed in the success surface |
+| populated | ✅ covered `[probe]` | At most three lines, in **fixed order** — added, then already-in-bank, then skipped — each independently zero-suppressed. The order is fixed rather than "whatever is non-zero first" so the same fact is always in the same place across imports |
+| partial | ✅ covered `[probe]` | The card is **not** the partial surface; **S8** is (see E2 `partial`). Reusing the success-shaped peach card for a partial write is the specific failure this split prevents |
 | overflow | ✅ covered | Three short lines in a peach card inside the sheet's scroll view; the card grows and the sheet scrolls. The card is not height-locked |
+| zero-one-many | ✅ covered `[probe]` | Every line is a singular/plural **pure function**, not a string interpolation (`## Copywriting Contract` → "Singular / plural is a pure function"): "1 question added" / "85 questions added", "1 row was skipped" / "3 rows were skipped". The zero branch is **suppression of the line**, not a "0" rendering |
 | long-text | ✅ covered | Every line is app-authored and bounded by an integer count — the longest reachable string is "100 were already in your bank". No user content reaches the summary card; user content appears **only** in the skip list (E4), where it is capped |
 
 ### E4 — The skip list (list-collection)
@@ -841,6 +862,7 @@ tracked as ⚠ unresolved in the Interaction Contract above, and 4 categories ex
 | loading | ✅ covered | Unchanged — the C3 busy button owns it. B5 is produced by a guard that throws **before** the query is issued, so the busy state is measured in frames, not round trips |
 | error | ✅ covered | **B5 is the new state**: "You can drill at most 30 topics at once — uncheck a few.", brown Body, **no icon**, `key: setup-start-too-many-topics`. It replaces the misleading `kQuestionLoadErrorMessage` (which blames the connection) for this cause. Every topic, the level and all three sliders survive it (D-38 unchanged) |
 | partial | ✅ covered | Unchanged — only topic selection gates Start; level and sliders always hold values |
+| overflow | ✅ covered `[probe]` | The footer does **not** scroll, so its height is a real constraint — but B5 adds none. It is the fifth option in the **same single mutually-exclusive helper slot**, and it is shorter than B4 and carries **no icon** where B4 carries a 24px one. The footer's maximum height is therefore unchanged this phase, and Phase 3's existing footer geometry backstop still bounds it |
 | long-text | ✅ covered | B5 is a fixed 58-character string, shorter than the existing B4 message the non-scrolling footer already accommodates, and it carries no icon so it has the full width to wrap into. It is covered by Phase 3's existing footer long-text backstop rather than adding a new one |
 
 ### E6 — Setup topics card after a sheet dismissal (list-collection)
@@ -890,12 +912,29 @@ explicitly because it is the one screen in this flow the app does not control:
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
+Verified by `gsd-ui-checker` on 2026-08-09 — **APPROVED**, 6/6 dimensions, 0 blocking issues.
+
+- [x] Dimension 1 Copywriting: **FLAG** (non-blocking) — no banned generic CTA; primary actions are all
+      verb+noun. Flagged only for the bare dismissal/retry labels "Done" (S4, S8) and "Try again" (S7).
+      Both are contextually unambiguous — "Done" is the sole exit of a sheet whose headline sits directly
+      above it, and "Try again" resumes a named server read. **Accepted as-is.** If ever tightened,
+      "Try again" → "Try the import again" matches the phase's own verb+noun pattern. Destructive-action
+      confirmation correctly N/A: the importer is append-only
+- [x] Dimension 2 Visuals: PASS — focal point declared per state; icon-only AppBar action carries an
+      explicit accessible name via tooltip
+- [x] Dimension 3 Color: PASS — 60/30/10 declared; accent reserved-for is an enumerated list (14 carried
+      forward + exactly 2 new), not "all interactive elements"; error red narrowed to icons with measured
+      contrast (3.72:1 icon-safe / brown at 12.8:1 for text)
+- [x] Dimension 4 Typography: PASS — exactly 4 sizes, 2 weights, 2 families; line heights on every role
+- [x] Dimension 5 Spacing: PASS — 4/8/16/24/32/48/64, zero new exceptions, 44px touch floor confirmed
+- [x] Dimension 6 Registry Safety: PASS — no registry (Flutter); `file_picker ^11.0.3` contributes zero
+      widgets/icons/theme and sits behind a seam with no vendor type crossing into `lib/screens/`
+
+**Context compliance:** D-48..D-63 all reflected; no Deferred Idea appears in the spec.
+
+**Post-verification probe:** `## UI Considerations` re-run against `ui-consideration-probe.cjs` after
+approval — 13 engine-raised categories were found missing and resolved. No token, string or state
+changed as a result.
 
 **Approval:** pending
 
