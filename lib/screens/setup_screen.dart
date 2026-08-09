@@ -48,6 +48,59 @@ const List<String> kLevels = <String>['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
 const String kTopicsErrorMessage =
     "Couldn't reach your question bank — check your connection and try again.";
 
+/// The single user-facing message for a Start query that could not be SERVED
+/// (D-38).
+///
+/// **Why this is a sibling of [kTopicsErrorMessage] and not the same string.**
+/// The first clause is identical on purpose — one failure, one voice — but the
+/// second clause names the retry affordance, and the two failures have two
+/// different ones. The topics card has a "Try again" button sitting directly
+/// under its message; this one has no button at all, because re-tapping START
+/// SESSION *is* the retry (D-38 rejected a Retry/Cancel dialog for something the
+/// user can simply tap again). A shared string would have to name neither, and a
+/// failure message that does not name its own next action is half a message.
+///
+/// Same containment rule: no exception text, no Firestore error code, no
+/// collection name, no document ID, no project ID.
+const String kQuestionLoadErrorMessage =
+    "Couldn't reach your question bank — check your connection and tap "
+    'START SESSION again.';
+
+/// The zero-result explanation for a topics-by-level combination the bank has
+/// nothing for (D-41).
+///
+/// Names **both** dimensions, because either could be the one to change, and
+/// offers both actions in every branch for the same reason. "yet" is deliberate
+/// and warm: the bank is growable by Phase 4's importer, so this is a temporary
+/// state rather than a verdict.
+///
+/// **Three branches, and the third one is a length bound, not a shortcut.** The
+/// footer is the one region of Setup that does not scroll, so an unbounded topic
+/// list would grow the helper until it pushed the 64px button off-screen.
+/// Beyond two topics the message names the COUNT and still names the topic
+/// dimension ("any of your 4 topics"), which satisfies D-41 without an
+/// unbounded string.
+///
+/// The two-topic join word is **`or`**, never `and`: the query is a disjunction
+/// (`subject in [...]`), and "and" would imply a question has to match both.
+///
+/// A pure function, so all three branches are unit-testable on the host with no
+/// widget. Zero topics is unreachable — SETUP-07 gates Start on at least one —
+/// and falls into the count branch rather than earning a fourth string for a
+/// state the button makes impossible.
+String noQuestionsMessage(String level, List<String> topics) {
+  if (topics.length == 1) {
+    return 'No $level questions in ${topics.single} yet. '
+        'Try another level, or pick more topics.';
+  }
+  if (topics.length == 2) {
+    return 'No $level questions in ${topics.first} or ${topics.last} yet. '
+        'Try another level, or pick more topics.';
+  }
+  return 'No $level questions in any of your ${topics.length} topics yet. '
+      'Try another level, or pick different topics.';
+}
+
 /// The app's home screen (D-28): configure a session, then start it.
 ///
 /// Owns all six configurable values — topics, level, question count, thinking
@@ -136,6 +189,22 @@ class _SetupScreenState extends State<SetupScreen> {
   /// True when the last FOREGROUND read failed. Never set by a background
   /// refresh (D-35), which must not replace good data with an error.
   bool _topicsError = false;
+
+  /// True while the Start query is in flight (D-33) — the busy button.
+  bool _starting = false;
+
+  /// What the last Start attempt has to say for itself, or null when it has
+  /// nothing to say (it succeeded, or none has happened since the user last
+  /// changed something).
+  ///
+  /// **One message, so the zero-result and failure helpers are mutually
+  /// exclusive by construction rather than by discipline.** The companion flag
+  /// only chooses the treatment — a red icon means *something went wrong,
+  /// retrying is the fix*; no icon means *change a setting*. That split is the
+  /// footer's honesty signal and the reason both fields are always assigned
+  /// together, in [_startSession] and in [_clearStartMessage] and nowhere else.
+  String? _startMessage;
+  bool _startMessageIsFailure = false;
 
   @override
   void initState() {
@@ -269,7 +338,23 @@ class _SetupScreenState extends State<SetupScreen> {
       } else {
         _selectedTopics.remove(subject);
       }
+      _clearStartMessage();
     });
+  }
+
+  /// Drops whichever Start helper was showing.
+  ///
+  /// Both of them describe ONE specific topics-by-level attempt, so both must go
+  /// the moment that attempt stops describing the screen. "No C2 questions in
+  /// Travel yet." sitting under a configuration the user has since changed to B1
+  /// is not a stale message, it is a false one.
+  ///
+  /// Called from inside an existing `setState` in every place a setting changes
+  /// — every topic, the level and all three sliders — and again at the top of
+  /// [_startSession].
+  void _clearStartMessage() {
+    _startMessage = null;
+    _startMessageIsFailure = false;
   }
 
   /// Runs the real filtered query, then pushes the session (D-33).
@@ -298,37 +383,75 @@ class _SetupScreenState extends State<SetupScreen> {
       autoReplay: _autoReplay,
     );
 
-    final List<String> questions;
+    setState(() {
+      _starting = true;
+      // A new attempt supersedes the last one's explanation before it has an
+      // answer of its own.
+      _clearStartMessage();
+    });
+
+    List<String>? questions;
+    Object? failure;
     try {
       questions = await _questionSource.questionsFor(config);
+    } on QuestionBankUnavailableException catch (error) {
+      // The bank could not be READ — including the offline zero-documents-from-
+      // cache case, which the adapter has already turned into this throw. That
+      // is a failure, never a zero-result: "try another level" is only true
+      // advice when the server actually answered.
+      failure = error;
     } catch (error, stack) {
-      // KNOWN GAP, closed by plan 02, which adds the busy state (D-33), the
-      // zero-result message naming both level and topics (D-41) and the inline
-      // Start-failure message (D-38). As above, this catch contains and logs the
-      // failure rather than handling it: the user currently sees the tap do
-      // nothing, which is wrong but not a lie.
-      debugPrint('Start query failed: $error');
+      failure = error;
       debugPrintStack(stackTrace: stack);
-      return;
     }
-    // A zero-result combination is real and expected (D-41) — `Travel` at C1 has
-    // no questions by design. Plan 02 explains it inline; refusing to navigate is
-    // this plan's placeholder, because `questionAt` divides by `length` and an
-    // empty bank would crash the loop on its first prompt.
-    if (questions.isEmpty) return;
+
     if (!mounted) return;
 
-    Navigator.of(context).push(
+    if (failure != null) {
+      debugPrint('Start query failed: $failure');
+      setState(() {
+        _starting = false;
+        _startMessage = kQuestionLoadErrorMessage;
+        _startMessageIsFailure = true;
+      });
+      return;
+    }
+
+    // A zero-result combination is real, expected and server-confirmed (D-41) —
+    // `Travel` at C1 is empty in the seeded bank by design. It is explained here
+    // rather than navigated into: `questionAt` divides by `length`, so an empty
+    // bank would crash the loop on its first prompt, and more importantly the
+    // user is owed the reason.
+    final resolved = questions!;
+    if (resolved.isEmpty) {
+      setState(() {
+        _starting = false;
+        // Built from the SNAPSHOT, not from the live controls: the message must
+        // name the level and topics the query actually ran with.
+        _startMessage = noQuestionsMessage(config.level, config.topics);
+        _startMessageIsFailure = false;
+      });
+      return;
+    }
+
+    // Cleared BEFORE the push, so popping back off the session finds a normal
+    // footer rather than a button still spinning for a query that finished long
+    // ago.
+    setState(() => _starting = false);
+
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => PracticeScreen(
           config: config,
-          questions: questions,
+          questions: resolved,
           databaseHelper: _databaseHelper,
           recordingService: widget.recordingService,
           audioPlayerService: widget.audioPlayerService,
         ),
       ),
     );
+    if (!mounted) return;
+    await _refreshSubjectsOnReappear();
   }
 
   @override
@@ -386,7 +509,10 @@ class _SetupScreenState extends State<SetupScreen> {
                     // peach on peach would make them vanish.
                     _LevelChips(
                       selected: _level,
-                      onSelected: (level) => setState(() => _level = level),
+                      onSelected: (level) => setState(() {
+                        _level = level;
+                        _clearStartMessage();
+                      }),
                     ),
                     const SizedBox(height: 32), // xl
                     _SettingSlider(
@@ -402,8 +528,10 @@ class _SetupScreenState extends State<SetupScreen> {
                       divisions: 99,
                       semanticFormatter: (value) =>
                           '${value.round()} questions',
-                      onChanged: (value) =>
-                          setState(() => _questionCount = value.round()),
+                      onChanged: (value) => setState(() {
+                        _questionCount = value.round();
+                        _clearStartMessage();
+                      }),
                     ),
                     const SizedBox(height: 32), // xl
                     _SettingSlider(
@@ -418,8 +546,10 @@ class _SetupScreenState extends State<SetupScreen> {
                       divisions: 27,
                       semanticFormatter: (value) =>
                           '${value.round()} seconds thinking time',
-                      onChanged: (value) =>
-                          setState(() => _thinkingSeconds = value.round()),
+                      onChanged: (value) => setState(() {
+                        _thinkingSeconds = value.round();
+                        _clearStartMessage();
+                      }),
                     ),
                     const SizedBox(height: 32), // xl
                     _SettingSlider(
@@ -433,8 +563,10 @@ class _SetupScreenState extends State<SetupScreen> {
                       divisions: 110,
                       semanticFormatter: (value) =>
                           '${value.round()} seconds answer length',
-                      onChanged: (value) =>
-                          setState(() => _answerSeconds = value.round()),
+                      onChanged: (value) => setState(() {
+                        _answerSeconds = value.round();
+                        _clearStartMessage();
+                      }),
                     ),
                     const SizedBox(height: 32), // xl
                     _ReplayToggle(
@@ -462,6 +594,9 @@ class _SetupScreenState extends State<SetupScreen> {
               showBlockedHelper: topicsLoaded &&
                   subjects.isNotEmpty &&
                   _selectedTopics.isEmpty,
+              starting: _starting,
+              message: _startMessage,
+              messageIsFailure: _startMessageIsFailure,
               onStart: () => unawaited(_startSession()),
             ),
           ],
@@ -859,6 +994,9 @@ class _StartFooter extends StatelessWidget {
   const _StartFooter({
     required this.canStart,
     required this.showBlockedHelper,
+    required this.starting,
+    required this.message,
+    required this.messageIsFailure,
     required this.onStart,
   });
 
@@ -867,11 +1005,93 @@ class _StartFooter extends StatelessWidget {
   /// Narrower than `!canStart` on purpose — see the call site. "Pick at least
   /// one topic to start." is only true when there is something to pick.
   final bool showBlockedHelper;
+
+  /// The Start query is in flight (D-33).
+  final bool starting;
+
+  /// The last Start attempt's explanation, or null when there is none.
+  final String? message;
+
+  /// Whether [message] is a *something went wrong* (red icon, retry is the fix)
+  /// rather than a *change a setting* (no icon).
+  final bool messageIsFailure;
+
   final VoidCallback onStart;
+
+  /// At most ONE helper line, chosen by an else-if chain so the three keys are
+  /// mutually exclusive by construction rather than by three conditions that
+  /// have to be kept disjoint by hand.
+  ///
+  /// Nothing at all while the topics are loading, empty or unreachable: the card
+  /// directly above already says what is happening and, in the failure case,
+  /// owns the only Retry affordance. A second simultaneous message would make
+  /// Setup the one screen in the app with two competing error surfaces.
+  ///
+  /// The red-icon-versus-brown-words split is the footer's honesty signal: an
+  /// icon means something went wrong and retrying is the fix, no icon means
+  /// change a setting. The words stay brown in both because warm red measures
+  /// 3.03:1 on the ivory footer — icon-safe, text-unsafe.
+  Widget? _helper(ThemeData theme) {
+    if (showBlockedHelper) {
+      return Text(
+        'Pick at least one topic to start.',
+        key: const Key('setup-start-blocked'),
+        textAlign: TextAlign.center,
+        style: theme.textTheme.bodyLarge,
+      );
+    }
+    if (message == null) return null;
+    if (!messageIsFailure) {
+      return Text(
+        message!,
+        key: const Key('setup-start-no-questions'),
+        textAlign: TextAlign.center,
+        style: theme.textTheme.bodyLarge,
+      );
+    }
+    return Row(
+      key: const Key('setup-start-error'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          Icons.error_outline_rounded,
+          size: 24, // lg
+          color: theme.colorScheme.error,
+        ),
+        const SizedBox(width: 8), // sm
+        // Expanded so the message wraps inside the footer rather than
+        // overflowing it — the footer is the one region that does not scroll.
+        Expanded(
+          child: Text(message!, style: theme.textTheme.bodyLarge),
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final helper = _helper(theme);
+
+    // Two separate `styleFrom` calls rather than one with ternary arguments,
+    // because the busy state is a different button treatment, not a tweak.
+    // `FilledButton` paints `disabledBackgroundColor` whenever `onPressed` is
+    // null, so without the override a busy button would fall back to the peach
+    // blocked treatment — an action IN FLIGHT rendered identically to an action
+    // BLOCKED, which is the opposite message.
+    final ButtonStyle style = starting
+        ? FilledButton.styleFrom(
+            backgroundColor: theme.colorScheme.primary,
+            foregroundColor: theme.colorScheme.onPrimary,
+            disabledBackgroundColor: theme.colorScheme.primary, // stays coral
+            disabledForegroundColor: theme.colorScheme.onPrimary,
+          )
+        : FilledButton.styleFrom(
+            backgroundColor: theme.colorScheme.primary,
+            foregroundColor: theme.colorScheme.onPrimary,
+            disabledBackgroundColor: theme.colorScheme.surface, // peach
+            disabledForegroundColor: theme.colorScheme.onSurface,
+          );
 
     return Padding(
       padding: const EdgeInsets.symmetric(
@@ -881,37 +1101,46 @@ class _StartFooter extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Shown ONLY when a topic is the thing missing: the disabled button
-          // and the reason it is disabled still arrive together, but for the
-          // loading / empty / could-not-load cases the reason lives in the
-          // topics card directly above — which is more specific and, in the
-          // failure case, also carries the fix. Duplicating it here would make
-          // Setup the one screen with two competing messages about one problem.
-          if (showBlockedHelper) ...[
-            Text(
-              'Pick at least one topic to start.',
-              key: const Key('setup-start-blocked'),
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyLarge,
-            ),
+          // The 8px gap belongs to the helper, not to the footer: the resting
+          // ready state is one button and nothing else.
+          if (helper != null) ...[
+            helper,
             const SizedBox(height: 8), // sm
           ],
           SizedBox(
             width: double.infinity,
-            height: 64, // Touch-target floor from the UI-SPEC exceptions.
+            // Touch-target floor from the UI-SPEC exceptions, and identical in
+            // all three button states: the 24px spinner sits inside it with room
+            // to spare, so there is no layout shift on tap or on completion.
+            height: 64,
             child: FilledButton(
               key: const Key('setup-start'),
               // Null — not a swallowed tap — so the gate is enforced by the
               // widget itself and SETUP-07 cannot be defeated by a stray
-              // handler (D-19).
-              onPressed: canStart ? onStart : null,
-              style: FilledButton.styleFrom(
-                backgroundColor: theme.colorScheme.primary,
-                foregroundColor: theme.colorScheme.onPrimary,
-                disabledBackgroundColor: theme.colorScheme.surface,
-                disabledForegroundColor: theme.colorScheme.onSurface,
-              ),
-              child: Text('START SESSION', style: theme.textTheme.labelLarge),
+              // handler (D-19). The same holds for the busy frame, which is what
+              // makes a double-Start structurally impossible rather than merely
+              // ignored.
+              onPressed: (canStart && !starting) ? onStart : null,
+              style: style,
+              child: starting
+                  // The busy state carries no text at all, so it carries a
+                  // semantic label instead — otherwise the one moment the screen
+                  // is doing something would be silent to a screen reader. The
+                  // spinner is brown `onPrimary`, not coral: coral inside a
+                  // coral-filled button would be invisible.
+                  ? Semantics(
+                      label: 'Starting session',
+                      child: SizedBox(
+                        width: 24, // lg
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          key: const Key('setup-start-busy'),
+                          strokeWidth: 3,
+                          color: theme.colorScheme.onPrimary,
+                        ),
+                      ),
+                    )
+                  : Text('START SESSION', style: theme.textTheme.labelLarge),
             ),
           ),
         ],
