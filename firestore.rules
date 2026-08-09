@@ -1,0 +1,43 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// This bank is KNOWINGLY OPEN. That is a decision (D-46), not an oversight, and
+// this comment is the mitigation being honest rather than a fix.
+//
+// WHAT IS OPEN
+//   Anyone who learns this Firebase project ID can read the ENTIRE question
+//   bank, and can overwrite or delete any question in it. There is no
+//   authentication of any kind in front of the `questions` collection: not for
+//   reading, and not for writing.
+//
+// WHY IT IS OPEN
+//   EnglishReflex has no login. PROJECT.md puts Firebase Auth out of scope for
+//   v1, so there is no identity to write a rule against. Read is open because
+//   the app itself is unauthenticated. Write is open because the seed script
+//   (`tool/seed_questions.mjs`) needs it today and Phase 4's in-app JSON
+//   importer (IMPORT-01) will need it from the client tomorrow. The rejected
+//   alternative — read-only client rules plus an Admin-SDK service-account key
+//   for writes — would be narrower for exactly one phase and then reopened.
+//
+// WHAT WOULD CHANGE IT
+//   Adding Firebase Auth and rewriting these rules against `request.auth`.
+//   That is the only thing that closes this, and it is deliberately deferred.
+//
+// WHAT IS *NOT* EXPOSED BY THIS
+//   Practice recordings, session history and session configuration are NEVER
+//   written to Firestore. They live in app-private on-device storage (sqflite +
+//   the app documents directory) and no rule here reaches them. This project
+//   uses no Firebase Storage and no Firebase Auth.
+// ─────────────────────────────────────────────────────────────────────────────
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // The question bank, and nothing else. Everything outside this match falls
+    // through to Firestore's default deny — there is deliberately no rule at
+    // the `/{document=**}` root.
+    match /questions/{questionId} {
+      allow read, write: if true;
+    }
+  }
+}

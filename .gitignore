@@ -46,3 +46,8 @@ app.*.map.json
 
 .claude/worktrees/
 .claude/gsd-core/
+
+# The one-off Firestore seed script (tool/, D-45) has its own npm dependency
+# tree. It is a maintainer's-machine developer tool, never part of the app
+# binary, so its install output stays out of the repo.
+tool/node_modules/
