@@ -127,7 +127,26 @@ Plans:
   3. On first run, the question bank already contains ~10 general-purpose seeded topics so Setup is never empty.
   4. The app has exactly 3 core screens (Setup, Practice Session, History) with no extraneous navigation.
 
-**Plans**: TBD
+**Plans**: 5 plans
+Plans:
+
+**Wave 1**
+
+- [ ] 04-01-PLAN.md — Tracer: a JSON file lands in the bank end to end (picker seam, pure validator, server-only dedupe read, chunked writer, sheet, Setup wiring)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 04-02-PLAN.md — Every row and every failure gets its own surface (skip list, duplicates, the four terminal states, blocked mid-write dismissal)
+- [ ] 04-03-PLAN.md — UI-03 navigation contract (`docs/NAVIGATION.md`) and the >30-topics message with its own exception type
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 04-04-PLAN.md — 600-row starter bank authored, generation prompt corrected, `tool/` deleted, project records updated
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 04-05-PLAN.md — Release-manifest permission re-check, one-way wipe of the dev seed, and the on-device seed import that proves the importer
+
 **UI hint**: yes
 
 ## Progress
