@@ -1,19 +1,22 @@
 ---
 phase: 02-full-timed-practice-session-setup-loop-controls
 verified: 2026-08-09T04:26:36Z
-status: human_needed
+status: passed
 score: 16/16 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
 re_verification: null
 deferred:
+
   - truth: "Questions are filtered by the selected topics and CEFR level (PlaceholderQuestionSource returns the whole bank unfiltered)"
     addressed_in: "Phase 3"
     evidence: "Phase 3 Success Criterion 2: 'Starting a session fetches only the questions matching the selected topics and CEFR level from Firestore.' The seam (QuestionSource) already exists and is the documented Phase 3 swap point."
 human_verification:
+
   - test: |
       D-31 real-device interruption check (harvested from 02-05-PLAN <human-check>).
       On a REAL device (not an emulator), with a real SIM:
+
       1. Start a session with answer length 60 s and begin recording an answer.
       2. Call the device from another phone and ANSWER the call. Speak ~10 s, hang up.
       3. Return to the app.
@@ -33,12 +36,15 @@ human_verification:
       and the commit; they cannot prove the OS delivers the signal with enough runway.
       Step 5 exists specifically to settle A1. Step 6 also settles the wakelock (D-30),
       whose host test proves only that the seam is called.
+
   - test: "Run a full configured session on a real device with the real microphone: set d to 120 s and to 10 s, and let each auto-stop fire."
     expected: "Recording auto-stops at the configured d, the on-screen readout hits 0:00 at the same moment, and the answer is playable from History."
     why_human: "The `d` deadline is host-tested against a fake recorder backend. Real capture, real m4a finalization and real playback at the new 10–120 s range have never run on hardware. Phase 1 already carries device-UAT-pending on LOOP-03/LOOP-06 for the same reason; Phase 2 widens the range."
+
   - test: "Visually review Setup, both countdown surfaces, the recording surface, the paused surface, the stop dialog and the completion state against 02-UI-SPEC.md on a real device."
     expected: "Colour roles, the Baloo 2 headings, the 96px ring vs the 128px glyph distinction (D-22), touch-target floors and the cartoon-like feel match the UI-SPEC."
     why_human: "Visual appearance, perceived distinctness of the two countdowns, and 'playful/colourful' quality are not assertable by widget tests."
+
   - test: "Review the 8 judgment-tier prohibitions listed in the Prohibitions section of this report and confirm the LLM-judge verdicts."
     expected: "Each MUST-NOT is confirmed as not having happened."
     why_human: "unverified-prohibition — human review recommended. These prohibitions carry no `verification: test` marker and no wired negative-test enforcement, so the verdicts below are NON-AUTHORITATIVE LLM judgements backed by codebase evidence, never a green automated pass."

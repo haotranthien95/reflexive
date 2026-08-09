@@ -10,30 +10,30 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Setup
 
 - [ ] **SETUP-01**: User can select one or more topics via checkboxes, fetched from the Firestore question bank (topics = distinct `subject` values present)
-- [ ] **SETUP-02**: User can select a CEFR level (A1, A2, B1, B2, C1, C2)
-- [ ] **SETUP-03**: User can pick the number of questions for the session, from 1 to 100 (`question_count`)
-- [ ] **SETUP-04**: User can set the pre-record countdown duration in seconds (`t`)
-- [ ] **SETUP-05**: User can set the max recording duration in seconds before auto-stop (`d`)
-- [ ] **SETUP-06**: User can toggle whether each recording auto-plays back after capture (`r`)
-- [ ] **SETUP-07**: Starting a session requires at least one topic selected; the Start action is blocked/disabled otherwise
+- [x] **SETUP-02**: User can select a CEFR level (A1, A2, B1, B2, C1, C2)
+- [x] **SETUP-03**: User can pick the number of questions for the session, from 1 to 100 (`question_count`)
+- [x] **SETUP-04**: User can set the pre-record countdown duration in seconds (`t`)
+- [x] **SETUP-05**: User can set the max recording duration in seconds before auto-stop (`d`)
+- [x] **SETUP-06**: User can toggle whether each recording auto-plays back after capture (`r`)
+- [x] **SETUP-07**: Starting a session requires at least one topic selected; the Start action is blocked/disabled otherwise
 
 ### Practice Loop
 
-- [ ] **LOOP-01**: Starting a session shows a 3-second countdown before the first question appears
-- [ ] **LOOP-02**: Each question displays with a live `t`-second countdown before recording begins
+- [x] **LOOP-01**: Starting a session shows a 3-second countdown before the first question appears
+- [x] **LOOP-02**: Each question displays with a live `t`-second countdown before recording begins
 - [x] **LOOP-03**: Recording starts automatically the instant the pre-record countdown reaches 0
 - [x] **LOOP-04**: Recording stops automatically after `d` seconds
 - [x] **LOOP-05**: User can manually stop the current recording early via a large, always-visible stop button
 - [x] **LOOP-06**: If `r` is true, the just-recorded answer plays back automatically once recording stops
-- [ ] **LOOP-07**: After each question (and its playback, if enabled), a 3-second countdown transitions to the next question
-- [ ] **LOOP-08**: The session completes automatically once `question_count` questions have been answered
+- [x] **LOOP-07**: After each question (and its playback, if enabled), a 3-second countdown transitions to the next question
+- [x] **LOOP-08**: The session completes automatically once `question_count` questions have been answered
 
 ### Session Controls
 
-- [ ] **CTRL-01**: The app bar shows a Pause/Resume control at all times during an active session
-- [ ] **CTRL-02**: The app bar shows a Stop control at all times during an active session
-- [ ] **CTRL-03**: Tapping Stop shows a confirmation dialog before the session actually ends early
-- [ ] **CTRL-04**: Pausing freezes the current countdown/recording state until the user resumes
+- [x] **CTRL-01**: The app bar shows a Pause/Resume control at all times during an active session
+- [x] **CTRL-02**: The app bar shows a Stop control at all times during an active session
+- [x] **CTRL-03**: Tapping Stop shows a confirmation dialog before the session actually ends early
+- [x] **CTRL-04**: Pausing freezes the current countdown/recording state until the user resumes
 
 ### History
 
@@ -101,24 +101,24 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | SETUP-01 | Phase 3 | Pending |
-| SETUP-02 | Phase 2 | Pending |
-| SETUP-03 | Phase 2 | Pending |
-| SETUP-04 | Phase 2 | Pending |
-| SETUP-05 | Phase 2 | Pending |
-| SETUP-06 | Phase 2 | Pending |
-| SETUP-07 | Phase 2 | Pending |
-| LOOP-01 | Phase 2 | Pending |
-| LOOP-02 | Phase 2 | Pending |
-| LOOP-03 | Phase 1 | Complete (device UAT pending) |
+| SETUP-02 | Phase 2 | Complete |
+| SETUP-03 | Phase 2 | Complete |
+| SETUP-04 | Phase 2 | Complete |
+| SETUP-05 | Phase 2 | Complete |
+| SETUP-06 | Phase 2 | Complete |
+| SETUP-07 | Phase 2 | Complete |
+| LOOP-01 | Phase 2 | Complete |
+| LOOP-02 | Phase 2 | Complete |
+| LOOP-03 | Phase 1 | Complete (device UAT discharged in Phase 2) |
 | LOOP-04 | Phase 1 | Complete |
 | LOOP-05 | Phase 1 | Complete |
-| LOOP-06 | Phase 1 | Complete (device UAT pending) |
-| LOOP-07 | Phase 2 | Pending |
-| LOOP-08 | Phase 2 | Pending |
-| CTRL-01 | Phase 2 | Pending |
-| CTRL-02 | Phase 2 | Pending |
-| CTRL-03 | Phase 2 | Pending |
-| CTRL-04 | Phase 2 | Pending |
+| LOOP-06 | Phase 1 | Complete (device UAT discharged in Phase 2) |
+| LOOP-07 | Phase 2 | Complete |
+| LOOP-08 | Phase 2 | Complete |
+| CTRL-01 | Phase 2 | Complete |
+| CTRL-02 | Phase 2 | Complete |
+| CTRL-03 | Phase 2 | Complete |
+| CTRL-04 | Phase 2 | Complete |
 | HIST-01 | Phase 1 | Complete |
 | HIST-02 | Phase 1 | Complete |
 | HIST-03 | Phase 1 | Complete (device UAT pending) |

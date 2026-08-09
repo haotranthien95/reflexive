@@ -14,7 +14,7 @@ EnglishReflex ships as four vertical slices, each a fully demoable capability. P
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Record, Save & Replay a Single Answer (Crash-Safe)** - Prove the core record → save-immediately → replay → history loop survives an app kill before any looping or setup complexity is added (completed 2026-08-08)
-- [ ] **Phase 2: Full Timed Practice Session (Setup, Loop & Controls)** - Wrap the proven recording primitive into a configurable, multi-question timed drill with pause/resume/stop-with-confirm
+- [x] **Phase 2: Full Timed Practice Session (Setup, Loop & Controls)** - Wrap the proven recording primitive into a configurable, multi-question timed drill with pause/resume/stop-with-confirm (completed 2026-08-09)
 - [ ] **Phase 3: Real Question Bank via Firestore** - Replace placeholder topic/question data with the live Firestore-backed question bank
 - [ ] **Phase 4: Bulk Import, Seed Content & Screen Polish** - Add JSON bulk import, seed ~10 starter topics, and confirm the app stays to exactly 3 screens
 
@@ -125,6 +125,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Record, Save & Replay a Single Answer (Crash-Safe) | 6/6 | Complete    | 2026-08-08 |
-| 2. Full Timed Practice Session (Setup, Loop & Controls) | 5/5 | In Progress|  |
+| 2. Full Timed Practice Session (Setup, Loop & Controls) | 5/5 | Complete    | 2026-08-09 |
 | 3. Real Question Bank via Firestore | 0/TBD | Not started | - |
 | 4. Bulk Import, Seed Content & Screen Polish | 0/TBD | Not started | - |

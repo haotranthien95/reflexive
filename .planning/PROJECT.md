@@ -14,15 +14,16 @@ The user can drill spoken English under real time pressure (timed prompt → for
 
 - ✓ History and audio recordings are stored locally on-device (not in the cloud) — Phase 1
 - ✓ Progress is saved incrementally as the session runs (question-by-question), not only at session end — an app kill/crash mid-session must not lose already-answered questions — Phase 1 (force-kill verified on-device: finished answers survive, an in-flight recording leaves no row and its partial file is swept on next launch)
-- ✓ Visual direction — warm, cartoon-like palette with the rounded Baloo 2 face, large touch targets, reflow-safe at max OS text scale — Phase 1
+- ✓ Visual direction — warm, cartoon-like palette with the rounded Baloo 2 face, large touch targets, reflow-safe at max OS text scale — Phase 1 (UI-SPEC conformance re-confirmed on-device in Phase 2)
+- ✓ Session setup controls: CEFR level (A1–C2), question count (1–100), pre-record countdown `t`, max recording duration `d`, auto-replay toggle `r`, and Start blocked until setup is valid — Phase 2 (topic multi-select ships against placeholder data; the Firebase fetch behind it is Phase 3 / SETUP-01)
+- ✓ Practice loop: 3s countdown to start → per question: show question + `t`s countdown → auto-start recording → auto-stop at `d`s (or manual stop) → replay if `r` is true → 3s countdown to next question → repeat until `question_count` reached — Phase 2 (real-microphone capture verified on-device across the widened 10–120 s `d` range)
+- ✓ Persistent app bar during a session with Pause/Resume and Stop; Stop requires confirmation — Phase 2
+- ✓ Exercise history: every session is saved and listed; opening one shows its questions with their recordings, tap a question to play its recording — Phase 1 (list/detail/replay), extended to multi-question sessions in Phase 2
 
 ### Active
 
-- [ ] Session setup: pick topics (fetched from Firebase, multi-select), CEFR level (A1–C2), question count (1–100), pre-record countdown `t`, max recording duration `d`, and whether to auto-replay `r`
-- [ ] Practice loop: 3s countdown to start → per question: show question + `t`s countdown → auto-start recording → auto-stop at `d`s (or manual stop via a large stop button) → replay if `r` is true → 3s countdown to next question → repeat until `question_count` reached
-- [ ] Persistent app bar during a session with Pause/Resume and Stop; Stop requires confirmation
-- [ ] Exercise history: every session is saved and listed; opening one shows its questions with their recordings, tap a question to play its recording — *Phase 1 shipped the list, detail and tap-to-replay against single-answer sessions; multi-question sessions arrive in Phase 2*
-- [ ] The practice loop must run fully offline — no network permission in the release build, no outbound request on any loop path *(emerged in Phase 1: the font was the app's only remote fetch and is now bundled)*
+- [ ] Session setup topic multi-select must be fed by distinct `subject` values fetched from Firestore (SETUP-01) — Phase 2 built the control against placeholder topics
+- [ ] The practice loop must run fully offline — no network permission in the release build, no outbound request on any loop path *(emerged in Phase 1: the font was the app's only remote fetch and is now bundled; re-verified in Phase 2 against the merged release manifest — `RECORD_AUDIO` is still the only permission)*
 - [ ] Question bank stored in Firebase with schema `{id, content, subject, level, created_at}`
 - [ ] JSON import feature to bulk-add questions to the bank, format: `{"data": [{"content": "...", "subject": "...", "level": "..."}, ...]}` (id/created_at auto-generated on import)
 - [ ] ~10 general-purpose starter topics seeded in the question bank (e.g. Daily Life, Travel, Sports, Food, Work, Health, Education, Technology, Family, Entertainment)
@@ -66,6 +67,11 @@ The user can drill spoken English under real time pressure (timed prompt → for
 | Baloo 2 bundled as an app asset with `allowRuntimeFetching = false` | The font CDN was the app's only outbound request; bundling keeps the release build network-permission-free and stops the silent fallback to Material's default font | ✓ Phase 1 — confirmed in a release build in airplane mode |
 | Backend seams (`RecorderBackend`, `AudioPlaybackBackend`, `documentsDirProvider`) instead of a DI package | Makes the record/playback/path code unit-testable without a device or platform channel, at the cost of one optional constructor parameter each | ✓ Phase 1 — loop logic is covered by host-run tests |
 | Local DB is raw `sqflite` with `PRAGMA foreign_keys = ON`, no ORM | Two tables and a handful of queries don't justify a codegen step; the pragma makes the schema's REFERENCES clause actually enforce | ✓ Phase 1 |
+| An OS interruption (call, backgrounding) parks the session *paused* and commits the partial answer; it never auto-resumes recording | Auto-resuming would capture audio the user doesn't know is being captured, and losing the partial answer would break the crash-safety promise mid-drill | ✓ Phase 2 — verified on a real device with a real answered call (D-31) |
+| `wakelock_plus` (pinned `^1.7.0`) held for session lifetime, behind a one-seam `ScreenWakeController` | The default ~30 s OS screen timeout is shorter than one think-plus-answer cycle, so the screen locked mid-answer; 1.6.x throws `NoActivityException` on the backgrounding path this app actually takes | ✓ Phase 2 — screen stays on for the whole session, off normally afterwards; adds no permission (Android `FLAG_KEEP_SCREEN_ON`, iOS `isIdleTimerDisabled`) |
+| One `_requestStop()` shared by the Stop action and `PopScope`, rather than a bool-returning `_confirmStop()` | A bool-returning confirm would duplicate the zero-answer-vs-completion branch at both producers — exactly the drift the single-exit rule forbids | ✓ Phase 2 — exactly one `showDialog` and one `completeEarly` call site, re-entrancy guarded |
+| `_expectingSelfPause` flag distinguishes a user pause from an OS interruption | Both arrive through the same recorder callback; without the flag a user pause would be mislabelled `interrupted` and show the wrong banner | ✓ Phase 2 — set before `pause()`, consumed once, released on failure and on every resume so a later genuine interruption still registers |
+| `PlaceholderQuestionSource` is the documented Phase 3 swap seam, not a stub | Lets the timed loop and crash-safety be built and tested without coupling them to Firebase wiring | — Pending (swapped in Phase 3) |
 
 ## Evolution
 
@@ -85,4 +91,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-08-08 after Phase 01*
+*Last updated: 2026-08-09 after Phase 02*
