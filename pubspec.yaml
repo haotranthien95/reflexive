@@ -40,6 +40,7 @@ dependencies:
   path_provider: ^2.1.6
   path: ^1.9.0
   google_fonts: ^8.2.1
+  wakelock_plus: ^1.7.0
 
 dev_dependencies:
   flutter_test:

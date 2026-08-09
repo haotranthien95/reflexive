@@ -45,6 +45,16 @@ enum PracticePhase {
   error,
 }
 
+/// Why the session is frozen — the one input that selects between the two
+/// paused-banner variants (D-24 vs D-31).
+///
+/// The distinction is user-visible and load-bearing: the interrupted banner
+/// makes a CLAIM about durability ("your answer was saved"), which is only ever
+/// true on the path that finalized and committed the in-flight answer before
+/// parking. Showing it after an ordinary Pause would promise a save that never
+/// happened.
+enum PausedReason { user, interrupted }
+
 /// The session-start countdown, LOOP-01. A literal, not a setting: D-16 makes
 /// `t` configurable and deliberately leaves this one fixed.
 const int kGetReadySeconds = 3;
@@ -160,6 +170,48 @@ class PracticeState extends ChangeNotifier {
   /// about to become pausable. See [pause] for the race this resolves.
   bool _pendingPauseRequest = false;
 
+  /// Which reason [_applyPendingPause] should publish when it fires. An
+  /// interruption arriving during `arming` must still read as an interruption
+  /// once the microphone comes up.
+  PausedReason _pendingPauseReason = PausedReason.user;
+
+  /// Why the session is currently frozen. Null whenever it is not.
+  PausedReason? pausedReason;
+
+  /// True while a `true` event this app ITSELF caused is still in flight on
+  /// `onPausedChanged`.
+  ///
+  /// **The stream cannot tell the two apart.** `record` reports "the recorder is
+  /// now paused" identically whether the OS paused it for an answered call or
+  /// whether this app called `pause()` a microsecond ago — both are a `true` on
+  /// the same stream. Stream delivery is asynchronous, so the event routinely
+  /// arrives before [pause] has finished publishing [PracticePhase.paused],
+  /// which means the phase check in [_handleInterruption] alone does NOT close
+  /// the window: an ordinary Pause tap would be reported to the user as an
+  /// interruption, complete with a banner claiming an answer was saved that
+  /// never was. So the app remembers which it was, and the handler consumes
+  /// exactly one such event.
+  bool _expectingSelfPause = false;
+
+  /// Set by [handleInterruption] BEFORE any await, and read by
+  /// [stopRecording]'s tail. It is what turns the ordinary "commit, replay,
+  /// advance" tail into "commit, then stop" without forking the commit itself.
+  bool _interruptionPending = false;
+
+  /// Non-null while an interruption is being handled — the re-entrancy collapse
+  /// for the two independent producers. An answered call arrives on the audio
+  /// path and a backgrounding on the lifecycle path, and both fire at once when
+  /// a call is answered from the lock screen.
+  Future<void>? _interruptionInFlight;
+
+  /// True while parked paused with the interrupted answer already committed.
+  ///
+  /// The resume from THIS park cannot restore a frozen phase, because there is
+  /// none: the answer finished, so the next step is the following question's
+  /// get-ready, not a countdown that was mid-tick. Restoring `recording` here
+  /// would resume a recorder that has already been stopped and finalized.
+  bool _resumeStartsNextQuestion = false;
+
   bool _disposed = false;
 
   /// The phases in which there is actually a clock to freeze.
@@ -202,6 +254,8 @@ class PracticeState extends ChangeNotifier {
     // fire against a disposed object.
     _phaseBeforePause = null;
     _pendingPauseRequest = false;
+    _resumeStartsNextQuestion = false;
+    pausedReason = null;
     super.dispose();
   }
 
@@ -221,7 +275,7 @@ class PracticeState extends ChangeNotifier {
   ///
   /// Idempotent: a second Pause tap is a no-op that neither double-freezes a
   /// clock nor skips one.
-  Future<void> pause() async {
+  Future<void> pause({PausedReason reason = PausedReason.user}) async {
     if (phase == PracticePhase.paused) return;
 
     if (!_pausablePhases.contains(phase)) {
@@ -240,6 +294,7 @@ class PracticeState extends ChangeNotifier {
       // to freeze.
       if (phase == PracticePhase.arming || phase == PracticePhase.saving) {
         _pendingPauseRequest = true;
+        _pendingPauseReason = reason;
       }
       return;
     }
@@ -247,7 +302,13 @@ class PracticeState extends ChangeNotifier {
     final PracticePhase frozen = phase;
     switch (frozen) {
       case PracticePhase.recording:
+        // Set BEFORE the call: the state-change event can be delivered while
+        // this await is still outstanding.
+        _expectingSelfPause = true;
         if (!await recordingService.pause()) {
+          // Nothing paused, so nothing will be reported — releasing the flag
+          // keeps it from swallowing a genuine interruption later.
+          _expectingSelfPause = false;
           _fail();
           return;
         }
@@ -263,6 +324,7 @@ class PracticeState extends ChangeNotifier {
     }
 
     _phaseBeforePause = frozen;
+    pausedReason = reason;
     phase = PracticePhase.paused;
     _notify();
   }
@@ -277,7 +339,29 @@ class PracticeState extends ChangeNotifier {
   /// does not confirm it resumed routes to [_fail] rather than publishing a
   /// running session over a still-frozen microphone.
   Future<void> resume() async {
+    // An explicit Resume also cancels a pause that was DEFERRED by the race in
+    // [pause]. Without this, a Stop dialog opened during `arming` or `saving`
+    // and then dismissed with "Keep going" would leave the deferred request
+    // armed, freezing the session at the next countdown seconds after the user
+    // explicitly chose to keep going.
+    _pendingPauseRequest = false;
+    _expectingSelfPause = false;
     if (phase != PracticePhase.paused) return;
+
+    // The interrupted-and-committed park (D-31). There is no frozen phase to
+    // restore — the answer FINISHED — so this resume is the LOOP-07 tail the
+    // commit would have run had the interruption not stopped it: `k` moves and
+    // the same 3·2·1 every other question opens with is armed. The auto-replay
+    // stays skipped: the user is coming back to a screen they left, and
+    // starting playback the instant they return is exactly the "never resume
+    // by itself" rule this path exists to honour.
+    if (_resumeStartsNextQuestion) {
+      _resumeStartsNextQuestion = false;
+      pausedReason = null;
+      questionNumber += 1;
+      _enterGetReady();
+      return;
+    }
 
     final PracticePhase frozen = _phaseBeforePause ?? PracticePhase.getReady;
     switch (frozen) {
@@ -297,7 +381,123 @@ class PracticeState extends ChangeNotifier {
     }
 
     _phaseBeforePause = null;
+    pausedReason = null;
     phase = frozen;
+    _notify();
+  }
+
+  /// The ONE interruption handler (D-31).
+  ///
+  /// Both producers converge here: an ANSWERED call, which the recorder reports
+  /// on `RecordingService.onPausedChanged`, and the app being backgrounded,
+  /// which the screen's `AppLifecycleListener` reports. One handler is what
+  /// makes the guarantee below a single thing to test and reason about instead
+  /// of two implementations that drift.
+  ///
+  /// **The guarantee: an in-flight answer is finalized and COMMITTED before the
+  /// session parks.** Losing a spoken answer to a phone call is the failure this
+  /// exists to prevent, so the ordering is not negotiable — the flag is set
+  /// BEFORE any await (a second signal arriving mid-await must find it already
+  /// set), and the finalize → ONE transaction → commit sequence in
+  /// [stopRecording] is reused verbatim rather than forked.
+  ///
+  /// **The app never resumes by itself afterwards.** Recording resumes only on
+  /// an explicit user tap, and the auto-replay is skipped on this path
+  /// entirely: replaying into a screen the user is not looking at, or starting
+  /// playback the instant they return, both contradict that rule.
+  ///
+  /// Re-entrant signals collapse onto the in-flight handler — an answered call
+  /// taken from the lock screen fires both producers at once.
+  Future<void> handleInterruption() {
+    final inFlight = _interruptionInFlight;
+    if (inFlight != null) return inFlight;
+    final started = _handleInterruption().whenComplete(
+      () => _interruptionInFlight = null,
+    );
+    _interruptionInFlight = started;
+    return started;
+  }
+
+  Future<void> _handleInterruption() async {
+    // Already frozen, or already over: nothing to interrupt. An interruption
+    // landing on a user-initiated pause deliberately does NOT relabel it — the
+    // interrupted banner promises a save that this path did not perform.
+    if (phase == PracticePhase.paused || phase == PracticePhase.complete) {
+      return;
+    }
+
+    // A pause THIS APP asked for, reported back on the same stream an OS pause
+    // arrives on, and delivered before [pause] finished publishing the paused
+    // phase above. Consume exactly one such event: treating it as an
+    // interruption would show the D-31 banner — which promises a saved answer —
+    // over an ordinary Pause tap that saved nothing.
+    if (_expectingSelfPause) {
+      _expectingSelfPause = false;
+      return;
+    }
+
+    // Set BEFORE the await below, never after: [stopRecording]'s tail reads it
+    // once the commit returns, and that read happens inside this same await.
+    _interruptionPending = true;
+
+    if (phase == PracticePhase.recording) {
+      // Finalize the file, commit in one transaction, then park paused — the
+      // whole of that is [stopRecording] plus its interruption branch.
+      await stopRecording();
+      return;
+    }
+
+    // No live microphone, so nothing to save: freeze whatever clock is running
+    // through the ordinary pause path, labelled as an interruption.
+    _interruptionPending = false;
+    await pause(reason: PausedReason.interrupted);
+  }
+
+  /// Parks the session after an interruption whose answer is already committed.
+  void _parkPausedAfterInterruption() {
+    _countdown?.cancel();
+    _countdown = null;
+    // Deliberately NOT a frozen phase: see [_resumeStartsNextQuestion].
+    _phaseBeforePause = null;
+    _resumeStartsNextQuestion = true;
+    pausedReason = PausedReason.interrupted;
+    phase = PracticePhase.paused;
+    _notify();
+  }
+
+  /// Ends the session from a CONFIRMED Stop (CTRL-03 / D-27).
+  ///
+  /// Deliberately routes through the very same [_enterComplete] a naturally
+  /// finished session takes: a session stopped early reaches exactly the state a
+  /// completed one does, only with a lower count, and the copy never frames
+  /// stopping early as a failure. Two completion transitions is how the two
+  /// paths would drift apart.
+  ///
+  /// Only reachable with at least one committed answer — a Stop confirmed at
+  /// zero answers pops straight back to Setup instead (D-26), because there is
+  /// nothing to view and nothing was ever written.
+  void completeEarly() {
+    // Whatever clock was live is over: the session is.
+    _countdown?.cancel();
+    _countdown = null;
+    _phaseBeforePause = null;
+    _pendingPauseRequest = false;
+    _resumeStartsNextQuestion = false;
+    pausedReason = null;
+    recordingSecondsRemaining = null;
+    // The answer still being captured is deliberately DISCARDED, never
+    // committed: the dialog promised only the answers already saved, and this
+    // one was interrupted mid-sentence by the user's own choice. Stopping the
+    // recorder here is what keeps the microphone from staying live behind the
+    // completion screen; the unreferenced .m4a is swept by the next launch's
+    // `pruneOrphanRecordings()`, exactly as any abandoned recording is.
+    unawaited(recordingService.stop().catchError((Object _) => null));
+    _enterComplete();
+  }
+
+  /// The ONE transition into the completion state (D-27).
+  void _enterComplete() {
+    phase = PracticePhase.complete;
     _notify();
   }
 
@@ -311,7 +511,9 @@ class PracticeState extends ChangeNotifier {
   void _applyPendingPause() {
     if (!_pendingPauseRequest) return;
     _pendingPauseRequest = false;
-    unawaited(pause());
+    final PausedReason reason = _pendingPauseReason;
+    _pendingPauseReason = PausedReason.user;
+    unawaited(pause(reason: reason));
   }
 
   /// [notifyListeners] that is safe after [dispose].
@@ -408,8 +610,9 @@ class PracticeState extends ChangeNotifier {
   Future<void> startNewQuestion() {
     final inFlight = _startInFlight;
     if (inFlight != null) return inFlight;
-    final started =
-        _startNewQuestion().whenComplete(() => _startInFlight = null);
+    final started = _startNewQuestion().whenComplete(
+      () => _startInFlight = null,
+    );
     _startInFlight = started;
     return started;
   }
@@ -434,7 +637,8 @@ class PracticeState extends ChangeNotifier {
       // The random suffix is load-bearing: two recordings starting inside the
       // same millisecond would otherwise share a file name and one would
       // silently overwrite the other's saved answer.
-      final fileName = '${DateTime.now().millisecondsSinceEpoch}'
+      final fileName =
+          '${DateTime.now().millisecondsSinceEpoch}'
           '_${_random.nextInt(1 << 20)}.m4a';
       final absolutePath = p.join(dir.path, fileName);
 
@@ -550,7 +754,8 @@ class PracticeState extends ChangeNotifier {
     }
 
     final relativePath =
-        _currentRelativePath ?? recordingRelativePath(p.basename(finalizedPath));
+        _currentRelativePath ??
+        recordingRelativePath(p.basename(finalizedPath));
     _currentRelativePath = null;
 
     try {
@@ -590,6 +795,23 @@ class PracticeState extends ChangeNotifier {
     sessionStartedAt ??= DateTime.now();
     recordingSecondsRemaining = null;
 
+    // D-31. The answer is on disk and in the database — the whole point of
+    // finalizing before parking — so the loop stops HERE, before the replay and
+    // before the advance. Everything above this line is unchanged: the
+    // interruption path and the ordinary path share one commit, byte for byte.
+    if (_interruptionPending) {
+      _interruptionPending = false;
+      // A session whose LAST answer was the interrupted one is FINISHED, not
+      // paused: there is no next question to resume into, and parking would
+      // leave the user with a RESUME pill that has nothing to do (LOOP-08).
+      if (answeredCount >= config.questionCount) {
+        _enterComplete();
+        return;
+      }
+      _parkPausedAfterInterruption();
+      return;
+    }
+
     // SETUP-06: the replay is the SESSION's choice now, not Phase 1's hardcoded
     // always-on (D-10). With `r` off the player is not touched at all — not
     // called and then ignored, not called with a zero volume: an untouched
@@ -611,8 +833,9 @@ class PracticeState extends ChangeNotifier {
           // answer can be up to 120 s (SETUP-05), and a 65 s bound would trip
           // halfway through its own replay. The bound is freezable and excludes
           // paused time.
-          completionTimeout:
-              replayCompletionTimeoutFor(Duration(seconds: config.answerSeconds)),
+          completionTimeout: replayCompletionTimeoutFor(
+            Duration(seconds: config.answerSeconds),
+          ),
         );
       } catch (_) {
         // Cosmetic only. See above — never a reason to strand the loop.
@@ -624,8 +847,7 @@ class PracticeState extends ChangeNotifier {
     // `questionNumber`. A save failure at the last question therefore leaves the
     // session one answer short and does not fake a completion (D-27).
     if (answeredCount >= config.questionCount) {
-      phase = PracticePhase.complete;
-      _notify();
+      _enterComplete();
       return;
     }
 
