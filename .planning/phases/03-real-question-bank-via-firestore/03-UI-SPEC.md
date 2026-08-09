@@ -1,7 +1,8 @@
 ---
 phase: 3
 slug: real-question-bank-via-firestore
-status: draft
+status: approved
+reviewed_at: 2026-08-09
 shadcn_initialized: false
 preset: none
 created: 2026-08-09
@@ -582,8 +583,15 @@ introduces or changes. Element kinds were confirmed rather than left to the pros
 error-state *copy* lives in `## Copywriting Contract`; the rows below reference it rather than
 restating it.
 
-**Coverage: 21 applicable — 16 ✅ covered, 5 🧪 backstop, 0 ⚠ unresolved** (plus 1 interaction race
+**Coverage: 24 applicable — 19 ✅ covered, 5 🧪 backstop, 0 ⚠ unresolved** (plus 1 interaction race
 tracked as ⚠ unresolved in the Interaction Contract above).
+
+*Probe run at ui-phase Step 9.5 against the verified UI-SPEC. Detected element kinds: E1
+`form + list-collection`, E2 `form + list-collection + interactive-control + static-content`, E3
+`list-collection`. All three draw the full 8-category taxonomy, so no kind-confirmation override was
+needed. The engine raised three E2 categories the hand-authored pass had missed — `populated`,
+`overflow`, `zero-one-many` — each resolved below against the already-approved Layout Contract rather
+than new contract. Zero `unclassified` candidates.*
 
 ### E1 — Topics card, now async (form + list-collection + interactive-control)
 
@@ -606,6 +614,9 @@ tracked as ⚠ unresolved in the Interaction Contract above).
 | loading | ✅ covered | NEW C3 busy state (D-33): coral fill retained via `disabledBackgroundColor` override, 24px brown spinner replacing the label, `onPressed: null`, fixed 64px height, `Semantics(label: 'Starting session')`, key `setup-start-busy` |
 | error | ✅ covered | B4 — red 24px icon + brown `kQuestionLoadErrorMessage` in an `Expanded`, key `setup-start-error`. Every topic, the level and all three sliders are preserved (D-38); re-tapping Start is the retry and the copy says so. B3 (zero-result) is the sibling non-error outcome with its own key and no icon |
 | partial | ✅ covered | Only topic selection gates Start; the level always holds a value (single-select invariant) and the three sliders always hold values, so "partially filled" collapses into the empty row above |
+| populated | ✅ covered | The ready state is C1 + B1: coral-filled `START SESSION` with its brown Label and **no helper line at all**. A helper line is the exception, not the resting state — the footer at rest is one button and nothing else, which is why the 8px helper→button gap is applied only when a helper is present |
+| overflow | ✅ covered | The footer is a `Column(mainAxisSize: min)` sitting *below* the `Expanded` scroll view, so it grows downward-bounded by shrinking the scroll area above rather than overflowing, and the B4 message sits in an `Expanded` beside its icon so it wraps. The button's 64px height is fixed in all three states, so nothing the footer does can push the CTA off-screen. Verification of the extreme case is carried by the `long-text` backstop below rather than duplicated here |
+| zero-one-many | ✅ covered | The helper slot is **zero-or-one, never many** — B2/B3/B4 are mutually exclusive by construction (B3 and B4 cannot coexist because a query either throws or returns and each tap replaces the previous outcome; B2 cannot coexist with either because reaching a query requires ≥1 topic checked). The button slot is likewise exactly one of C1/C2/C3. This is the same "deliberately total map" invariant the topics card carries, and is testable as "at most one of `setup-start-blocked`, `setup-start-no-questions`, `setup-start-error` is present" |
 | long-text | 🧪 backstop | The footer is the one non-scrolling region and now carries up to a **two-line B3 message plus a wrapped B4 row** above a 64px button. Verify no `RenderFlex` overflow at the largest OS text-scale setting for the longest variant (3+ topics, or B4 with its icon), and that the footer **grows and shrinks the scroll area above** rather than clipping. This is a direct escalation of Phase 2's E5 backstop, which was written when the footer's worst case was one short fixed line |
 
 ### E3 — The resolved question list handed to the loop (list-collection)
@@ -650,14 +661,14 @@ required UAT item of this phase (D-39), not a UI-SPEC concern.
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
+- [x] Dimension 1 Copywriting: PASS
+- [x] Dimension 2 Visuals: PASS
+- [x] Dimension 3 Color: PASS
+- [x] Dimension 4 Typography: PASS
+- [x] Dimension 5 Spacing: PASS
+- [x] Dimension 6 Registry Safety: PASS
 
-**Approval:** pending
+**Approval:** approved 2026-08-09 — 6/6 dimensions PASS, no blocking or degrading issues.
 
 **Notes carried to the checker and planner:**
 
