@@ -8,6 +8,7 @@ Widget _host(
   PracticePhase phase, {
   VoidCallback? onStop,
   VoidCallback? onStart,
+  VoidCallback? onResume,
   int? recordingSecondsRemaining,
   bool isFirstQuestion = true,
   VoidCallback? onViewSession,
@@ -20,6 +21,7 @@ Widget _host(
           phase: phase,
           onStop: onStop ?? () {},
           onStart: onStart ?? () {},
+          onResume: onResume ?? () {},
           recordingSecondsRemaining: recordingSecondsRemaining,
           isFirstQuestion: isFirstQuestion,
           // Defaulted to no-ops so the totality loop below — which pumps EVERY
@@ -167,6 +169,48 @@ void main() {
     expect(
       find.byKey(kPhaseControlKeys[PracticePhase.getReady]!),
       findsOneWidget,
+    );
+  });
+
+  testWidgets('the paused control is the RESUME pill, and it invokes onResume',
+      (tester) async {
+    // A paused session is frozen: nothing but this tap moves it forward, so a
+    // caption here would be a real dead end.
+    var resumes = 0;
+
+    await tester.pumpWidget(
+      _host(PracticePhase.paused, onResume: () => resumes++),
+    );
+
+    expect(find.byKey(kPhaseControlKeys[PracticePhase.paused]!), findsOneWidget);
+    expect(find.text('RESUME'), findsOneWidget);
+    expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+
+    await tester.tap(find.text('RESUME'));
+    await tester.pump();
+    expect(resumes, 1);
+  });
+
+  testWidgets('a null onResume disables the RESUME pill rather than crashing',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: PhaseControl(
+              phase: PracticePhase.paused,
+              onStop: () {},
+              onStart: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(kPhaseControlKeys[PracticePhase.paused]!), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+      isNull,
     );
   });
 

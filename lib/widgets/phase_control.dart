@@ -231,19 +231,39 @@ class PhaseControl extends StatelessWidget {
       case PracticePhase.paused:
         // The one control that matters while frozen. A caption would be a dead
         // end here: nothing but this tap moves a paused session forward.
-        return SizedBox(
+        //
+        // The `d` readout comes WITH it, at its frozen value, whenever the
+        // session was paused mid-answer — a frozen number beside the paused
+        // banner is unambiguous in a way that hiding it would not be. It joins
+        // this phase's existing key rather than adding a second, exactly as it
+        // does under STOP (D-21). A pause from a countdown phase carries no
+        // readout at all, because `recordingSecondsRemaining` is null there.
+        return Column(
           key: kPhaseControlKeys[PracticePhase.paused],
-          height: 64, // Touch-target floor from the UI-SPEC spacing exceptions.
-          child: FilledButton.icon(
-            onPressed: onResume,
-            style: FilledButton.styleFrom(
-              backgroundColor: theme.colorScheme.primary,
-              foregroundColor: theme.colorScheme.onPrimary,
-              padding: const EdgeInsets.symmetric(horizontal: 32), // xl
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              height: 64, // Touch-target floor from the UI-SPEC exceptions.
+              child: FilledButton.icon(
+                onPressed: onResume,
+                style: FilledButton.styleFrom(
+                  backgroundColor: theme.colorScheme.primary,
+                  foregroundColor: theme.colorScheme.onPrimary,
+                  padding: const EdgeInsets.symmetric(horizontal: 32), // xl
+                ),
+                icon: const Icon(Icons.play_arrow_rounded),
+                label: Text('RESUME', style: theme.textTheme.labelLarge),
+              ),
             ),
-            icon: const Icon(Icons.play_arrow_rounded),
-            label: Text('RESUME', style: theme.textTheme.labelLarge),
-          ),
+            if (recordingSecondsRemaining != null) ...[
+              const SizedBox(height: 16), // md
+              Text(
+                formatRemainingSeconds(recordingSecondsRemaining!),
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyLarge,
+              ),
+            ],
+          ],
         );
 
       case PracticePhase.complete:

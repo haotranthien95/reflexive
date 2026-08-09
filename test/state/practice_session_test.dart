@@ -6,11 +6,13 @@ import 'package:englishreflex/db/database_helper.dart';
 import 'package:englishreflex/models/question_answer.dart';
 import 'package:englishreflex/models/session.dart';
 import 'package:englishreflex/models/session_config.dart';
+import 'package:englishreflex/screens/practice_screen.dart';
 import 'package:englishreflex/screens/setup_screen.dart';
 import 'package:englishreflex/services/audio_player_service.dart';
 import 'package:englishreflex/services/recording_service.dart';
 import 'package:englishreflex/state/practice_state.dart';
 import 'package:englishreflex/utils/audio_paths.dart';
+import 'package:englishreflex/widgets/mascot.dart';
 import 'package:englishreflex/widgets/phase_control.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -45,6 +47,102 @@ class FakeRecordingService extends RecordingService {
 
   @override
   Future<void> dispose() async {}
+}
+
+/// A [RecorderBackend] that touches no platform channel, so the REAL
+/// [RecordingService] — and therefore a REAL `d` deadline and a REAL pause
+/// confirmation — can be driven from inside the loop.
+///
+/// [FakeRecordingService] above is the right double for cases about phase
+/// ORDER; it is the wrong one for cases about the `d` clock, because it has no
+/// deadline at all. The pause cases below need both clocks to be real.
+class FakeRecorderBackend implements RecorderBackend {
+  final List<String> calls = <String>[];
+
+  /// Makes [pause] behave exactly like both native implementations do in the
+  /// wrong state: it returns normally, having done nothing, and [isPaused]
+  /// keeps reporting false.
+  ///
+  /// This switch is what PROVES the honesty rule rather than merely asserting
+  /// it — a fake whose pause always works cannot tell "the microphone stopped"
+  /// apart from "the call did not throw".
+  bool pauseSilentlyNoOps = false;
+
+  bool paused = false;
+  String? lastStartedPath;
+
+  final StreamController<bool> pausedChanges =
+      StreamController<bool>.broadcast();
+
+  @override
+  Future<bool> hasPermission() async => true;
+
+  @override
+  Future<void> start(String absoluteFilePath) async {
+    calls.add('start');
+    lastStartedPath = absoluteFilePath;
+  }
+
+  @override
+  Future<void> pause() async {
+    calls.add('pause');
+    if (pauseSilentlyNoOps) return;
+    paused = true;
+    pausedChanges.add(true);
+  }
+
+  @override
+  Future<void> resume() async {
+    calls.add('resume');
+    paused = false;
+    pausedChanges.add(false);
+  }
+
+  @override
+  Future<bool> isPaused() async => paused;
+
+  @override
+  Stream<bool> get onPausedChanged => pausedChanges.stream;
+
+  @override
+  Future<String?> stop() async {
+    calls.add('stop');
+    return lastStartedPath;
+  }
+
+  @override
+  Future<void> dispose() async {
+    calls.add('dispose');
+    await pausedChanges.close();
+  }
+}
+
+/// A playback backend whose completion event is fired BY THE TEST, so a replay
+/// can be held open across a pause for as long as a case needs.
+class FakePlaybackBackend implements AudioPlaybackBackend {
+  final List<String> calls = <String>[];
+  final StreamController<void> controller = StreamController<void>.broadcast();
+
+  @override
+  Future<void> play(String absoluteFilePath) async => calls.add('play');
+
+  @override
+  Stream<void> get onComplete => controller.stream;
+
+  @override
+  Future<void> pause() async => calls.add('pause');
+
+  @override
+  Future<void> resume() async => calls.add('resume');
+
+  @override
+  Future<void> stop() async => calls.add('stop');
+
+  @override
+  Future<void> dispose() async {
+    calls.add('dispose');
+    await controller.close();
+  }
 }
 
 /// Records every `play` call, and — when handed a [databaseHelper] — snapshots
@@ -113,6 +211,32 @@ class FailingAtDatabaseHelper extends InMemoryDatabaseHelper {
     if (appendCalls == failOnCall) {
       throw StateError('the database is full');
     }
+    return super.appendAnswer(
+      sessionId: sessionId,
+      questionText: questionText,
+      audioRelativePath: audioRelativePath,
+    );
+  }
+}
+
+/// An [InMemoryDatabaseHelper] whose commit parks until the test releases it.
+///
+/// This is what makes the auto-stop-versus-Pause race observable at all. A
+/// `tester.pump()` drains the fake zone's microtask queue, so against an
+/// ungated in-memory helper the ENTIRE save completes inside the same pump that
+/// fired the `d` deadline — the loop is back at the next get-ready before a test
+/// can act, and the `saving` phase the race is actually about never exists for
+/// long enough to tap into.
+class GatedDatabaseHelper extends InMemoryDatabaseHelper {
+  final Completer<void> gate = Completer<void>();
+
+  @override
+  Future<int> appendAnswer({
+    int? sessionId,
+    required String questionText,
+    required String audioRelativePath,
+  }) async {
+    await gate.future;
     return super.appendAnswer(
       sessionId: sessionId,
       questionText: questionText,
@@ -774,6 +898,413 @@ void main() {
 
       state.dispose();
     }
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // CTRL-04: the four clocks freeze in lock-step, and nothing restarts.
+  //
+  // Every case here pumps in explicit whole seconds and asserts the FROZEN
+  // value, not merely the phase: a pause that published `paused` while a clock
+  // kept running would satisfy a phase-only assertion and still be the exact
+  // dishonesty this plan exists to prevent.
+  // ───────────────────────────────────────────────────────────────────────────
+  group('pause freezes every clock', () {
+    /// The loop wired to a REAL [RecordingService] over a fake backend, so the
+    /// `d` deadline and the pause confirmation are both genuine.
+    ({PracticeState state, RecordingService service, FakeRecorderBackend backend})
+        realRecorderLoop({
+      required SessionConfig config,
+      DatabaseHelper? helper,
+      AudioPlayerService? player,
+      bool pauseSilentlyNoOps = false,
+    }) {
+      final backend = FakeRecorderBackend()
+        ..pauseSilentlyNoOps = pauseSilentlyNoOps;
+      final service = RecordingService(backend: backend);
+      return (
+        state: PracticeState(
+          recordingService: service,
+          audioPlayerService: player ?? FakeAudioPlayerService(calls),
+          databaseHelper: helper ?? databaseHelper,
+          config: config,
+        ),
+        service: service,
+        backend: backend,
+      );
+    }
+
+    /// Advances a loop sitting on an armed get-ready countdown to the moment the
+    /// microphone is live.
+    Future<void> reachRecording(WidgetTester tester, PracticeState state) async {
+      await tester.pump(const Duration(seconds: kGetReadySeconds));
+      await tester.pump(Duration(seconds: state.config.thinkingSeconds));
+      await settle(tester);
+    }
+
+    testWidgets('the 3·2·1 numeral freezes, and resumes from the digit it '
+        'stopped on', (tester) async {
+      final state = newState(config: configFor(questionCount: 1));
+
+      await state.startSession();
+      await tester.pump(const Duration(seconds: 1));
+      expect(state.countdownSeconds, 2);
+
+      await state.pause();
+      expect(state.phase, PracticePhase.paused);
+
+      // Twenty times the whole countdown, spent paused.
+      await tester.pump(const Duration(seconds: 60));
+      expect(state.countdownSeconds, 2, reason: 'the 3·2·1 ran while paused');
+      expect(state.phase, PracticePhase.paused);
+
+      await state.resume();
+      expect(state.phase, PracticePhase.getReady,
+          reason: 'resume must restore the frozen phase, not invent one');
+
+      await tester.pump(const Duration(seconds: 1));
+      expect(state.countdownSeconds, 1,
+          reason: 'resume restarted the countdown at 3 instead of continuing');
+
+      state.dispose();
+    });
+
+    testWidgets('the t countdown freezes, and the microphone stays cold '
+        'throughout', (tester) async {
+      final state =
+          newState(config: configFor(questionCount: 1, thinkingSeconds: 5));
+
+      await state.startSession();
+      await tester.pump(const Duration(seconds: kGetReadySeconds));
+      await tester.pump(const Duration(seconds: 2));
+      expect(state.phase, PracticePhase.reading);
+      expect(state.countdownSeconds, 3);
+
+      await state.pause();
+      await tester.pump(const Duration(seconds: 120));
+
+      expect(state.countdownSeconds, 3, reason: 'the t countdown ran while paused');
+      expect(
+        calls,
+        isEmpty,
+        reason: 'a frozen t countdown must never reach 0 and arm the recorder',
+      );
+
+      await state.resume();
+      await tester.pump(const Duration(seconds: 1));
+      expect(state.countdownSeconds, 2);
+
+      state.dispose();
+    });
+
+    testWidgets('the d deadline freezes: no auto-stop across a pause spanning '
+        'more than twice d, and exactly one after the resume', (tester) async {
+      final loop = realRecorderLoop(
+        config: configFor(questionCount: 1, answerSeconds: 10),
+      );
+      final state = loop.state;
+
+      await state.startSession();
+      await reachRecording(tester, state);
+      expect(state.phase, PracticePhase.recording);
+
+      await tester.pump(const Duration(seconds: 8));
+      expect(state.recordingSecondsRemaining, 2);
+
+      await state.pause();
+      expect(state.phase, PracticePhase.paused);
+
+      // Well past 2·d, all of it paused.
+      await tester.pump(const Duration(seconds: 25));
+      await settle(tester);
+      expect(state.phase, PracticePhase.paused,
+          reason: 'the d deadline fired through a pause');
+      expect(state.recordingSecondsRemaining, 2,
+          reason: 'the readout and the deadline are the same object (D-21)');
+      expect(await databaseHelper.listSessions(), isEmpty,
+          reason: 'an auto-stop committed an answer the user never finished');
+
+      await state.resume();
+      await tester.pump(const Duration(seconds: 1));
+      await settle(tester);
+      expect(state.phase, PracticePhase.recording,
+          reason: 'resume restarted the deadline: 2 s were left, not 1');
+
+      await tester.pump(const Duration(seconds: 1));
+      await settle(tester);
+      expect(state.phase, PracticePhase.complete);
+      expect(state.answeredCount, 1);
+
+      state.dispose();
+      await loop.service.dispose();
+    });
+
+    testWidgets('the replay completion bound freezes: the loop does not advance '
+        'while paused, however long the pause lasts', (tester) async {
+      final playback = FakePlaybackBackend();
+      final loop = realRecorderLoop(
+        config: configFor(questionCount: 2, answerSeconds: 10, autoReplay: true),
+        player: AudioPlayerService(backend: playback),
+      );
+      final state = loop.state;
+
+      await state.startSession();
+      await reachRecording(tester, state);
+      unawaited(state.stopRecording());
+      await settle(tester);
+      expect(state.phase, PracticePhase.replaying);
+
+      await state.pause();
+      expect(state.phase, PracticePhase.paused);
+      expect(playback.calls, contains('pause'));
+
+      // Twenty times the d-derived bound (10 s + 5 s), all of it paused.
+      await tester.pump(const Duration(seconds: 300));
+      await settle(tester);
+      expect(state.phase, PracticePhase.paused,
+          reason: 'the completion bound tripped while paused');
+      expect(state.questionNumber, 1,
+          reason: 'the loop advanced behind the user during a pause');
+
+      await state.resume();
+      await settle(tester);
+      expect(playback.calls, contains('resume'));
+
+      // The real completion event, arriving after the resume.
+      playback.controller.add(null);
+      await settle(tester);
+      expect(state.phase, PracticePhase.getReady);
+      expect(state.questionNumber, 2);
+
+      state.dispose();
+      await loop.service.dispose();
+    });
+
+    testWidgets('a pause the recorder does not confirm lands in the ERROR '
+        'phase, never in the paused phase', (tester) async {
+      // THE honesty rule (D-24). `record`'s pause is a guarded early return on
+      // both platforms, so a call landing in the wrong state returns normally
+      // having done nothing. A loop that believed it would publish
+      // "Paused — nothing is being recorded." over a live microphone.
+      final loop = realRecorderLoop(
+        config: configFor(questionCount: 1, answerSeconds: 10),
+        pauseSilentlyNoOps: true,
+      );
+      final state = loop.state;
+
+      await state.startSession();
+      await reachRecording(tester, state);
+      expect(state.phase, PracticePhase.recording);
+
+      await state.pause();
+
+      expect(state.phase, PracticePhase.error);
+      expect(state.phase, isNot(PracticePhase.paused));
+      expect(state.errorMessage, kRecordingErrorMessage);
+      expect(loop.backend.calls, contains('pause'),
+          reason: 'the recorder must genuinely have been asked');
+
+      state.dispose();
+      await loop.service.dispose();
+    });
+
+    testWidgets('two Pause taps then two Resume taps leave the loop exactly '
+        'where one of each would', (tester) async {
+      final state = newState(config: configFor(questionCount: 1));
+
+      await state.startSession();
+      await tester.pump(const Duration(seconds: 1));
+      expect(state.countdownSeconds, 2);
+
+      await state.pause();
+      await state.pause(); // idempotent — must not double-freeze or skip
+      expect(state.phase, PracticePhase.paused);
+
+      await tester.pump(const Duration(seconds: 30));
+      expect(state.countdownSeconds, 2);
+
+      await state.resume();
+      await state.resume(); // idempotent — must not re-arm a second countdown
+      expect(state.phase, PracticePhase.getReady);
+
+      await tester.pump(const Duration(seconds: 1));
+      expect(state.countdownSeconds, 1,
+          reason: 'a second resume armed a second countdown, double-ticking');
+
+      state.dispose();
+    });
+
+    testWidgets('a Pause landing in the same frame as the d deadline lets the '
+        'auto-stop win, and the pause applies at the next pausable phase',
+        (tester) async {
+      // The UI-SPEC leaves this exact frame unresolved; the resolution is that
+      // the auto-stop wins (the answer is already being finalized) and the
+      // pause request is DEFERRED rather than dropped — a user who tapped Pause
+      // gets a paused session either way.
+      final helper = GatedDatabaseHelper();
+      final loop = realRecorderLoop(
+        config: configFor(questionCount: 2, answerSeconds: 10),
+        helper: helper,
+      );
+      final state = loop.state;
+
+      await state.startSession();
+      await reachRecording(tester, state);
+      expect(state.phase, PracticePhase.recording);
+
+      // The tick that reaches zero fires the auto-stop, which takes the loop out
+      // of `recording` before the tap below is handled.
+      await tester.pump(const Duration(seconds: 10));
+      expect(state.phase, PracticePhase.saving);
+
+      await state.pause();
+      expect(state.phase, PracticePhase.saving,
+          reason: 'the pause must not interrupt a save in flight');
+
+      helper.gate.complete();
+      await settle(tester);
+
+      // The auto-stop won: the answer is committed.
+      final sessions = await helper.listSessions();
+      expect(sessions, hasLength(1));
+      expect(
+        await helper.listAnswersForSession(sessions.single.id!),
+        hasLength(1),
+      );
+      expect(state.answeredCount, 1);
+
+      // …and the deferred pause was applied at the next pausable phase rather
+      // than dropped.
+      expect(state.phase, PracticePhase.paused);
+      expect(state.displayPhase, PracticePhase.getReady);
+      expect(state.questionNumber, 2);
+
+      // Still frozen, because the freeze is real and not just a label.
+      await tester.pump(const Duration(seconds: 60));
+      expect(state.phase, PracticePhase.paused);
+      expect(state.countdownSeconds, kGetReadySeconds);
+
+      state.dispose();
+      await loop.service.dispose();
+    });
+
+    test('canPause is enabled exactly where there is a clock to freeze', () {
+      // CTRL-01 read literally: the action is PRESENT in every session phase and
+      // disabled — never hidden — where there is nothing to freeze. `complete`
+      // is the one phase where the whole action goes away, and it is inert here
+      // for the same reason.
+      const Set<PracticePhase> inert = <PracticePhase>{
+        PracticePhase.arming,
+        PracticePhase.saving,
+        PracticePhase.error,
+        PracticePhase.idle,
+        PracticePhase.complete,
+      };
+      final state = PracticeState(
+        recordingService: recordingService,
+        audioPlayerService: FakeAudioPlayerService(calls),
+        databaseHelper: databaseHelper,
+        config: const SessionConfig(
+          topics: <String>['Daily life'],
+          level: 'B1',
+          questionCount: 1,
+          thinkingSeconds: 3,
+          answerSeconds: 10,
+          autoReplay: false,
+        ),
+      );
+
+      for (final phase in PracticePhase.values) {
+        state.phase = phase;
+        expect(
+          state.canPause,
+          !inert.contains(phase),
+          reason: '$phase has the wrong Pause availability',
+        );
+      }
+
+      state.dispose();
+    });
+
+    testWidgets('on screen: the paused banner replaces no content, the pulse '
+        'ring is off, and the RESUME pill is the way forward', (tester) async {
+      tester.view.physicalSize = const Size(400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final backend = FakeRecorderBackend();
+      final service = RecordingService(backend: backend);
+      const config = SessionConfig(
+        topics: <String>['Daily life'],
+        level: 'B1',
+        questionCount: 2,
+        thinkingSeconds: 3,
+        answerSeconds: 10,
+        autoReplay: false,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PracticeScreen(
+            config: config,
+            recordingService: service,
+            audioPlayerService: FakeAudioPlayerService(calls),
+            databaseHelper: databaseHelper,
+          ),
+        ),
+      );
+      await tester.pump(const Duration(seconds: kGetReadySeconds));
+      await tester.pump(const Duration(seconds: 3));
+      await settle(tester);
+
+      // Three seconds into a 10 s answer, so the frozen readout below is a
+      // value the deadline genuinely stopped on rather than its initial one.
+      await tester.pump(const Duration(seconds: 3));
+
+      // Recording, and the app bar's Pause action is live.
+      expect(find.byKey(kPhaseControlKeys[PracticePhase.recording]!),
+          findsOneWidget);
+      expect(tester.widget<Mascot>(find.byType(Mascot)).isRecording, isTrue);
+      final pauseAction = find.byKey(const Key('practice-pause-action'));
+      expect(tester.widget<IconButton>(pauseAction).onPressed, isNotNull);
+      expect(find.byTooltip('Pause session'), findsOneWidget);
+
+      await tester.tap(pauseAction);
+      await settle(tester);
+
+      expect(find.byKey(const Key('practice-paused-banner')), findsOneWidget);
+      expect(find.text('Paused — nothing is being recorded.'), findsOneWidget);
+      expect(
+        tester.widget<Mascot>(find.byType(Mascot)).isRecording,
+        isFalse,
+        reason: 'the pulse ring means the microphone is LIVE',
+      );
+      // The frozen readout stays on screen at its frozen value…
+      expect(find.text('0:07 left'), findsOneWidget);
+      // …and the question card is still there — the banner is docked ABOVE the
+      // content, never instead of it.
+      expect(find.text(kQuestionsFirstPrompt), findsOneWidget);
+      expect(
+          find.byKey(kPhaseControlKeys[PracticePhase.paused]!), findsOneWidget);
+      expect(find.text('RESUME'), findsOneWidget);
+      expect(find.byTooltip('Resume session'), findsOneWidget);
+      expect(find.byKey(const Key('practice-error-banner')), findsNothing);
+
+      // The RESUME pill un-freezes the session.
+      // Scrolled into view first: the banner docks ABOVE the content rather
+      // than replacing it, which pushes the control slot past the bottom of a
+      // 900px-tall test surface. That is the banner doing exactly its job, not
+      // a layout fault — the screen is a SingleChildScrollView for this reason.
+      await tester.ensureVisible(find.text('RESUME'));
+      await settle(tester);
+      await tester.tap(find.text('RESUME'));
+      await settle(tester);
+      expect(find.byKey(const Key('practice-paused-banner')), findsNothing);
+      expect(find.byKey(kPhaseControlKeys[PracticePhase.recording]!),
+          findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
   });
 
   // ───────────────────────────────────────────────────────────────────────────
