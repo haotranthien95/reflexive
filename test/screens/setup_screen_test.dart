@@ -39,6 +39,18 @@ class _SilentRecorderBackend implements RecorderBackend {
   Future<void> start(String absoluteFilePath) async {}
 
   @override
+  Future<void> pause() async {}
+
+  @override
+  Future<void> resume() async {}
+
+  @override
+  Future<bool> isPaused() async => false;
+
+  @override
+  Stream<bool> get onPausedChanged => const Stream<bool>.empty();
+
+  @override
   Future<String?> stop() async => null;
 
   @override
@@ -51,6 +63,12 @@ class _SilentPlaybackBackend implements AudioPlaybackBackend {
 
   @override
   Future<void> play(String absoluteFilePath) async {}
+
+  @override
+  Future<void> pause() async {}
+
+  @override
+  Future<void> resume() async {}
 
   @override
   Future<void> stop() async {}

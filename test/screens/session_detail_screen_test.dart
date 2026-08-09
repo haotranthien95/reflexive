@@ -30,6 +30,12 @@ class FakePlaybackBackend implements AudioPlaybackBackend {
   Stream<void> get onComplete => const Stream<void>.empty();
 
   @override
+  Future<void> pause() async => calls.add('pause');
+
+  @override
+  Future<void> resume() async => calls.add('resume');
+
+  @override
   Future<void> stop() async => calls.add('stop');
 
   @override

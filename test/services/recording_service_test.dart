@@ -19,12 +19,48 @@ class FakeRecorderBackend implements RecorderBackend {
   Completer<void>? permissionGate;
   Completer<void>? startGate;
 
+  /// Makes [pause] behave EXACTLY like both native implementations do in the
+  /// wrong state: it returns normally, having done nothing at all. Nothing
+  /// throws, and [isPaused] keeps reporting false.
+  ///
+  /// This switch is the only thing that can prove the honesty rule. A fake whose
+  /// pause always works cannot distinguish "the microphone stopped" from "the
+  /// call did not throw" — and that distinction is the whole of CTRL-04's
+  /// safety argument.
+  bool pauseSilentlyNoOps = false;
+
+  bool paused = false;
+
+  final StreamController<bool> pausedChanges =
+      StreamController<bool>.broadcast();
+
   /// The path the backend most recently finished starting — i.e. what it is
   /// actually recording.
   String? lastStartedPath;
 
   int get stopCount => calls.where((c) => c == 'stop').length;
   bool get backendWasStarted => calls.any((c) => c.startsWith('start:'));
+
+  @override
+  Future<void> pause() async {
+    calls.add('pause');
+    if (pauseSilentlyNoOps) return;
+    paused = true;
+    pausedChanges.add(true);
+  }
+
+  @override
+  Future<void> resume() async {
+    calls.add('resume');
+    paused = false;
+    pausedChanges.add(false);
+  }
+
+  @override
+  Future<bool> isPaused() async => paused;
+
+  @override
+  Stream<bool> get onPausedChanged => pausedChanges.stream;
 
   @override
   Future<bool> hasPermission() async {
@@ -51,6 +87,7 @@ class FakeRecorderBackend implements RecorderBackend {
   @override
   Future<void> dispose() async {
     calls.add('dispose');
+    await pausedChanges.close();
   }
 }
 
@@ -294,6 +331,132 @@ void main() {
       throwsA(isA<StateError>()),
     );
     expect(backend.backendWasStarted, isFalse);
+  });
+
+  testWidgets('a CONFIRMED pause returns true and freezes the d deadline',
+      (tester) async {
+    await tester.pumpWidget(const SizedBox());
+    final backend = FakeRecorderBackend();
+    final service = RecordingService(backend: backend);
+    var fired = 0;
+
+    await service.start(
+      _pathA,
+      onAutoStop: () => fired++,
+      maxDuration: const Duration(seconds: 10),
+    );
+
+    await tester.pump(const Duration(seconds: 8));
+    expect(await service.pause(), isTrue);
+
+    // Two whole minutes of paused time on a deadline with 2 s left on it.
+    await tester.pump(const Duration(seconds: 120));
+    expect(fired, 0, reason: 'the d deadline kept running through a pause');
+
+    await service.dispose();
+  });
+
+  testWidgets('a pause that silently no-ops returns FALSE and leaves the '
+      'deadline running — a non-throwing call is never proof', (tester) async {
+    // THE honesty rule of this phase. `record`'s pause is a guarded early
+    // return on BOTH platforms (iOS guards on the recorder being in the record
+    // state, Android on isRecording()), so a call landing in the wrong state
+    // returns normally having done nothing. A service that inferred "the mic is
+    // paused" from "the call did not throw" would publish a banner reading
+    // "nothing is being recorded" over a live microphone.
+    await tester.pumpWidget(const SizedBox());
+    final backend = FakeRecorderBackend()..pauseSilentlyNoOps = true;
+    final service = RecordingService(backend: backend);
+    var fired = 0;
+
+    await service.start(
+      _pathA,
+      onAutoStop: () => fired++,
+      maxDuration: const Duration(seconds: 10),
+    );
+
+    await tester.pump(const Duration(seconds: 8));
+    expect(
+      await service.pause(),
+      isFalse,
+      reason: 'pause() believed a call that did nothing',
+    );
+    expect(backend.calls, contains('pause'),
+        reason: 'the backend must actually have been asked');
+
+    // The deadline was NOT frozen, because the microphone was not paused.
+    await tester.pump(const Duration(seconds: 2));
+    expect(fired, 1, reason: 'an unconfirmed pause must not disarm the deadline');
+
+    await service.dispose();
+  });
+
+  testWidgets('resuming continues the deadline from where the pause stopped, '
+      'and fires exactly one auto-stop', (tester) async {
+    await tester.pumpWidget(const SizedBox());
+    final backend = FakeRecorderBackend();
+    final service = RecordingService(backend: backend);
+    var fired = 0;
+
+    await service.start(
+      _pathA,
+      onAutoStop: () => fired++,
+      maxDuration: const Duration(seconds: 10),
+    );
+
+    await tester.pump(const Duration(seconds: 8));
+    expect(await service.pause(), isTrue);
+    await tester.pump(const Duration(seconds: 60));
+    expect(fired, 0);
+
+    expect(await service.resume(), isTrue);
+    await tester.pump(const Duration(seconds: 1));
+    expect(fired, 0, reason: 'resume restarted the deadline instead of '
+        'continuing it — 2 s were left, not 1');
+
+    await tester.pump(const Duration(seconds: 1));
+    expect(fired, 1);
+
+    await tester.pump(const Duration(seconds: 30));
+    expect(fired, 1, reason: 'the deadline is still one-shot after a pause');
+
+    await service.dispose();
+  });
+
+  testWidgets('onPausedChanged surfaces an OS-initiated pause the app never '
+      'requested', (tester) async {
+    // The ONLY way Dart learns about an interruption it did not cause (an
+    // answered call on iOS, audio-focus loss on Android). Plan 02-05 subscribes
+    // to exactly this.
+    await tester.pumpWidget(const SizedBox());
+    final backend = FakeRecorderBackend();
+    final service = RecordingService(backend: backend);
+    final seen = <bool>[];
+    final sub = service.onPausedChanged.listen(seen.add);
+
+    await service.start(_pathA, maxDuration: const Duration(seconds: 10));
+
+    // The OS pauses the recorder behind the app's back.
+    backend.paused = true;
+    backend.pausedChanges.add(true);
+    await tester.pump();
+
+    expect(seen, contains(true));
+    expect(
+      backend.calls,
+      isNot(contains('pause')),
+      reason: 'the app never asked — that is the whole point of this stream',
+    );
+
+    // `unawaited`, deliberately: AWAITING a broadcast subscription's cancel()
+    // inside a `testWidgets` body hangs the whole run. The future it returns is
+    // not completed by anything the fake clock drives, so the body parks
+    // forever and the case dies on the 10-minute suite timeout with no useful
+    // output. The cancel itself still takes effect — only the acknowledgement
+    // is unobservable here — and `service.dispose()` below closes the
+    // controller regardless.
+    unawaited(sub.cancel());
+    await service.dispose();
   });
 
   testWidgets('dispose cancels a pending deadline', (tester) async {

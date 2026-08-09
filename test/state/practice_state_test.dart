@@ -81,7 +81,8 @@ class FakeAudioPlayerService extends AudioPlayerService {
   bool throwOnPlay = false;
 
   @override
-  Future<void> play(String absoluteFilePath, {bool awaitCompletion = false}) async {
+  Future<void> play(String absoluteFilePath,
+      {bool awaitCompletion = false, Duration? completionTimeout}) async {
     calls.add('play');
     if (throwOnPlay) throw StateError('playback failed');
     sessionsAtFirstPlay ??= (await databaseHelper.listSessions()).length;

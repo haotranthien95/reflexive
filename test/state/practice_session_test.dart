@@ -69,10 +69,15 @@ class FakeAudioPlayerService extends AudioPlayerService {
   /// Simulates the player failing on an already-saved answer.
   bool throwOnPlay = false;
 
+  /// The bound the loop asked for, so a test can prove it is derived from the
+  /// session's `d` rather than the fixed Phase 1 ceiling.
+  Duration? lastCompletionTimeout;
+
   @override
   Future<void> play(String absoluteFilePath,
-      {bool awaitCompletion = false}) async {
+      {bool awaitCompletion = false, Duration? completionTimeout}) async {
     calls.add('play');
+    lastCompletionTimeout = completionTimeout;
     final DatabaseHelper? helper = databaseHelper;
     if (helper != null) {
       sessionsAtFirstPlay ??= (await helper.listSessions()).length;
