@@ -66,7 +66,7 @@ Plans:
   3. The session automatically completes once the configured `question_count` has been answered.
   4. An app bar with Pause/Resume and Stop is visible throughout the session; pausing freezes the current countdown/recording state, and tapping Stop requires confirmation before the session ends early.
 
-**Plans**: 3/5 plans executed
+**Plans**: 4/5 plans executed
 Plans:
 **Wave 1**
 
@@ -79,7 +79,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 02-04-PLAN.md — Pause/Resume: one confirmed freeze across the recorder, every countdown and the replay timeout
+- [x] 02-04-PLAN.md — Pause/Resume: one confirmed freeze across the recorder, every countdown and the replay timeout
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -125,6 +125,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Record, Save & Replay a Single Answer (Crash-Safe) | 6/6 | Complete    | 2026-08-08 |
-| 2. Full Timed Practice Session (Setup, Loop & Controls) | 3/5 | In Progress|  |
+| 2. Full Timed Practice Session (Setup, Loop & Controls) | 4/5 | In Progress|  |
 | 3. Real Question Bank via Firestore | 0/TBD | Not started | - |
 | 4. Bulk Import, Seed Content & Screen Polish | 0/TBD | Not started | - |
