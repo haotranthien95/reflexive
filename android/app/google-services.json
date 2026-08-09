@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "667113600186",
+    "project_id": "reflex-english",
+    "storage_bucket": "reflex-english.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:667113600186:android:c57cb58686cbedb53ebe83",
+        "android_client_info": {
+          "package_name": "com.englishreflex.englishreflex"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCGszPqMy91r5ko-3AlW2LFgQGrMv2YQHk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
