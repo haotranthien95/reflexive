@@ -98,11 +98,11 @@ Plans:
   1. The topic checkboxes in Setup are populated from the distinct `subject` values actually present in the Firestore question bank (schema `{id, content, subject, level, created_at}`).
   2. Starting a session fetches only the questions matching the selected topics and CEFR level from Firestore.
 
-**Plans**: 3 plans
+**Plans**: 1/3 plans executed
 Plans:
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — Tracer: a real seeded Firestore bank, real topics on Setup, and a real filtered query feeding the loop
+- [x] 03-01-PLAN.md — Tracer: a real seeded Firestore bank, real topics on Setup, and a real filtered query feeding the loop
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -139,5 +139,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Record, Save & Replay a Single Answer (Crash-Safe) | 6/6 | Complete    | 2026-08-08 |
 | 2. Full Timed Practice Session (Setup, Loop & Controls) | 5/5 | Complete    | 2026-08-09 |
-| 3. Real Question Bank via Firestore | 0/3 | Not started | - |
+| 3. Real Question Bank via Firestore | 1/3 | In Progress|  |
 | 4. Bulk Import, Seed Content & Screen Polish | 0/TBD | Not started | - |
