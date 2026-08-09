@@ -51,6 +51,13 @@ class PracticeScreen extends StatefulWidget {
 class _PracticeScreenState extends State<PracticeScreen> {
   late final PracticeState _state;
 
+  /// True while the one confirmation dialog is open.
+  ///
+  /// The re-entrancy guard for [_requestStop]: a second Stop tap, or a back
+  /// gesture landing while the dialog is up, must never stack a second dialog
+  /// on top of the first (CTRL-02/ordering).
+  bool _confirmingStop = false;
+
   @override
   void initState() {
     super.initState();
@@ -106,6 +113,56 @@ class _PracticeScreenState extends State<PracticeScreen> {
     );
   }
 
+  /// **The one and only way to end a session early** (CTRL-03 / D-25 / D-29).
+  ///
+  /// Both producers call exactly this: the app-bar Stop action and the system
+  /// back gesture intercepted by [PopScope]. Confirming and acting live in one
+  /// method rather than a `_confirmStop()` returning a bool plus two act-blocks,
+  /// because two act-blocks is precisely how the back gesture and the Stop
+  /// button drift into two different early exits.
+  ///
+  /// The order is fixed:
+  ///   1. pause, so the session is frozen behind the dialog (D-25) — no clock
+  ///      may run, and no answer may auto-save, while the user is deciding;
+  ///   2. show the dialog;
+  ///   3. anything that is not an explicit tap on the destructive action — the
+  ///      safe action, a barrier tap, or a back gesture closing the dialog, the
+  ///      last two of which arrive here as `null` — resumes and returns. There
+  ///      is exactly ONE destructive path and it always requires that tap;
+  ///   4. on confirm, with zero committed answers pop straight to Setup (D-26 —
+  ///      nothing was ever written, so there is nothing to view), otherwise
+  ///      enter the completion state a finished session also reaches (D-27).
+  Future<void> _requestStop() async {
+    if (_confirmingStop) return;
+    _confirmingStop = true;
+    try {
+      await _state.pause();
+      if (!mounted) return;
+
+      final int answeredCount = _state.answeredCount;
+      final bool? end = await showDialog<bool>(
+        context: context,
+        barrierDismissible: true,
+        builder: (context) =>
+            _StopConfirmationDialog(answeredCount: answeredCount),
+      );
+
+      if (end != true) {
+        await _state.resume();
+        return;
+      }
+      if (!mounted) return;
+
+      if (_state.answeredCount == 0) {
+        Navigator.of(context).pop();
+        return;
+      }
+      _state.completeEarly();
+    } finally {
+      _confirmingStop = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -124,163 +181,284 @@ class _PracticeScreenState extends State<PracticeScreen> {
         // the value it stopped on (UI-SPEC paused row).
         final PracticePhase displayPhase = _state.displayPhase;
 
-        return Scaffold(
-          appBar: AppBar(
-            title: Text(
-              isComplete
-                  ? 'Session complete'
-                  : 'Question ${_state.questionNumber} of '
-                      '${widget.config.questionCount}',
-              style: theme.textTheme.headlineSmall,
-              // A truncated "Question 100 of 100" at max text scale is
-              // acceptable; a RenderFlex overflow is not.
-              overflow: TextOverflow.ellipsis,
-            ),
-            // The user cannot navigate away from an active session (D-29), and
-            // there is deliberately no History icon here — it lives on Setup.
-            automaticallyImplyLeading: false,
-            // CTRL-01: Pause/Resume is present in EVERY session phase, and
-            // merely disabled where there is no clock to freeze — never hidden,
-            // so it can never appear to have vanished mid-session. The one
-            // exception is `complete`, where the session is genuinely over and
-            // the whole action goes away.
-            actions: isComplete
-                ? null
-                : <Widget>[
-                    IconButton(
-                      key: const Key('practice-pause-action'),
-                      icon: Icon(
-                        isPaused
-                            ? Icons.play_arrow_rounded
-                            : Icons.pause_rounded,
-                      ),
-                      tooltip: isPaused ? 'Resume session' : 'Pause session',
-                      // Coral when live, warm brown at 38% when inert — a
-                      // disabled coral icon would still read as an affordance.
-                      style: IconButton.styleFrom(
-                        foregroundColor: theme.colorScheme.primary,
-                        disabledForegroundColor:
-                            theme.colorScheme.onSurface.withValues(alpha: 0.38),
-                      ),
-                      onPressed: _state.canPause
-                          ? () => unawaited(
+        return PopScope<void>(
+          // D-29: while a session is live the system back gesture must not pop
+          // the route — it is routed into the SAME confirmation dialog the Stop
+          // action opens. Interception is RELEASED in the completion state,
+          // where the back arrow reappears and Back pops to Setup as usual.
+          canPop: isComplete,
+          // The CURRENT API. `onPopInvoked` is deprecated and `PopScope`
+          // asserts when both are supplied.
+          onPopInvokedWithResult: (bool didPop, void result) {
+            // The pop has already happened (canPop was true) — acting on it
+            // would open the dialog after the fact.
+            if (didPop) return;
+            unawaited(_requestStop());
+          },
+          child: Scaffold(
+            appBar: AppBar(
+              title: Text(
+                isComplete
+                    ? 'Session complete'
+                    : 'Question ${_state.questionNumber} of '
+                          '${widget.config.questionCount}',
+                style: theme.textTheme.headlineSmall,
+                // A truncated "Question 100 of 100" at max text scale is
+                // acceptable; a RenderFlex overflow is not.
+                overflow: TextOverflow.ellipsis,
+              ),
+              // The user cannot navigate away from an active session (D-29), and
+              // there is deliberately no History icon here — it lives on Setup.
+              // The back arrow REAPPEARS in the completion state, in lock-step
+              // with `PopScope.canPop` above: the session is over, so leaving it
+              // needs no confirmation and the affordance should say so.
+              automaticallyImplyLeading: isComplete,
+              // CTRL-01: Pause/Resume is present in EVERY session phase, and
+              // merely disabled where there is no clock to freeze — never hidden,
+              // so it can never appear to have vanished mid-session. The one
+              // exception is `complete`, where the session is genuinely over and
+              // the whole action goes away.
+              actions: isComplete
+                  ? null
+                  : <Widget>[
+                      IconButton(
+                        key: const Key('practice-pause-action'),
+                        icon: Icon(
+                          isPaused
+                              ? Icons.play_arrow_rounded
+                              : Icons.pause_rounded,
+                        ),
+                        tooltip: isPaused ? 'Resume session' : 'Pause session',
+                        // Coral when live, warm brown at 38% when inert — a
+                        // disabled coral icon would still read as an affordance.
+                        style: IconButton.styleFrom(
+                          foregroundColor: theme.colorScheme.primary,
+                          disabledForegroundColor: theme.colorScheme.onSurface
+                              .withValues(alpha: 0.38),
+                        ),
+                        onPressed: _state.canPause
+                            ? () => unawaited(
                                 isPaused ? _state.resume() : _state.pause(),
                               )
-                          : null,
+                            : null,
+                      ),
+                      // CTRL-02: Stop is the SECOND action, and — unlike Pause —
+                      // it is ENABLED in every session phase, `arming` and
+                      // `saving` included. The two actions never share an
+                      // availability rule: Pause needs a clock to freeze, Stop
+                      // needs only a session to end.
+                      //
+                      // Coral, not error red. Ending a session early destroys
+                      // nothing — every answer is already durably saved
+                      // (PERSIST-01) — so the destructive palette would overstate
+                      // it. Error red appears only on the dialog's destructive
+                      // label.
+                      IconButton(
+                        key: const Key('practice-stop-action'),
+                        icon: const Icon(Icons.stop_rounded),
+                        tooltip: 'Stop session',
+                        style: IconButton.styleFrom(
+                          foregroundColor: theme.colorScheme.primary,
+                        ),
+                        onPressed: () => unawaited(_requestStop()),
+                      ),
+                    ],
+            ),
+            body: SafeArea(
+              // The banner is docked above the question, never instead of it:
+              // UI-SPEC requires the question screen stay visible so the user is
+              // not left staring at a blank, dead-end screen.
+              child: Column(
+                children: [
+                  if (hasError)
+                    _ErrorBanner(
+                      message: _state.errorMessage ?? kRecordingErrorMessage,
+                      onRetry: _state.retry,
                     ),
-                  ],
-          ),
-          body: SafeArea(
-            // The banner is docked above the question, never instead of it:
-            // UI-SPEC requires the question screen stay visible so the user is
-            // not left staring at a blank, dead-end screen.
-            child: Column(
-              children: [
-                if (hasError)
-                  _ErrorBanner(
-                    message: _state.errorMessage ?? kRecordingErrorMessage,
-                    onRetry: _state.retry,
-                  ),
-                // Same slot, same construction as the error banner. The two are
-                // mutually exclusive by construction: a pause that could not be
-                // confirmed lands in `error`, never in `paused`.
-                if (isPaused) const _PausedBanner(),
-                Expanded(
-                  // Centred normally, scrollable rather than clipped once the
-                  // OS text-scale setting grows the content past the viewport
-                  // (UI-01).
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      return SingleChildScrollView(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 24, // lg — screen edge padding
-                          vertical: 32, // xl
-                        ),
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            minHeight: constraints.maxHeight - 64,
+                  // Same slot, same construction as the error banner. The two are
+                  // mutually exclusive by construction: a pause that could not be
+                  // confirmed lands in `error`, never in `paused`.
+                  if (isPaused) const _PausedBanner(),
+                  Expanded(
+                    // Centred normally, scrollable rather than clipped once the
+                    // OS text-scale setting grows the content past the viewport
+                    // (UI-01).
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        return SingleChildScrollView(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24, // lg — screen edge padding
+                            vertical: 32, // xl
                           ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              // The anchor slot. Every phase but `reading`
-                              // shows the mascot; `reading` swaps in the `t`
-                              // ring, which occupies the SAME 144px box — the
-                              // swap is why neither countdown can be mistaken
-                              // for the other, and the matching box is why it
-                              // costs no layout shift (D-22).
-                              if (displayPhase == PracticePhase.reading)
-                                CountdownRing(
-                                  remainingSeconds: _state.countdownSeconds,
-                                  totalSeconds: widget.config.thinkingSeconds,
-                                )
-                              else
-                                Mascot(
-                                  // The pulse ring means "the microphone is
-                                  // LIVE", so it is off in every paused state —
-                                  // leaving it running while frozen would be the
-                                  // single worst honesty failure in this phase.
-                                  isRecording: !isPaused &&
-                                      _state.phase == PracticePhase.recording,
-                                  isError: hasError,
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              minHeight: constraints.maxHeight - 64,
+                            ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                // The anchor slot. Every phase but `reading`
+                                // shows the mascot; `reading` swaps in the `t`
+                                // ring, which occupies the SAME 144px box — the
+                                // swap is why neither countdown can be mistaken
+                                // for the other, and the matching box is why it
+                                // costs no layout shift (D-22).
+                                if (displayPhase == PracticePhase.reading)
+                                  CountdownRing(
+                                    remainingSeconds: _state.countdownSeconds,
+                                    totalSeconds: widget.config.thinkingSeconds,
+                                  )
+                                else
+                                  Mascot(
+                                    // The pulse ring means "the microphone is
+                                    // LIVE", so it is off in every paused state —
+                                    // leaving it running while frozen would be the
+                                    // single worst honesty failure in this phase.
+                                    isRecording:
+                                        !isPaused &&
+                                        _state.phase == PracticePhase.recording,
+                                    isError: hasError,
+                                  ),
+                                const SizedBox(height: 32), // xl
+                                // The focus slot. Its three occupants swap by
+                                // phase and the question card is HIDDEN for two
+                                // of them (D-22): during the 3·2·1 there is
+                                // nothing to read yet, and at the end there is
+                                // nothing left to answer.
+                                if (displayPhase == PracticePhase.getReady)
+                                  _CountdownGlyph(
+                                    value: _state.countdownSeconds,
+                                  )
+                                else if (isComplete)
+                                  _CompletionHeadline(
+                                    answeredCount: _state.answeredCount,
+                                  )
+                                else
+                                  _QuestionCard(
+                                    question: _state.currentQuestion,
+                                  ),
+                                const SizedBox(height: 48), // 2xl
+                                // Every phase renders exactly one control here —
+                                // the mapping is total and exhaustively tested,
+                                // so no phase can leave this screen controlless.
+                                PhaseControl(
+                                  phase: _state.phase,
+                                  onStop: () =>
+                                      unawaited(_state.stopRecording()),
+                                  onStart: () =>
+                                      unawaited(_state.startNewQuestion()),
+                                  onResume: () => unawaited(_state.resume()),
+                                  recordingSecondsRemaining:
+                                      _state.recordingSecondsRemaining,
+                                  // "Get ready…" only for the session's own
+                                  // 3·2·1; every later one counts INTO a
+                                  // question, so it says "Next question…". `k`
+                                  // has already moved by then (LOOP-07).
+                                  isFirstQuestion: _state.questionNumber == 1,
+                                  // Null until the session has a committed
+                                  // `sessions` row (D-26), which renders the
+                                  // button DISABLED rather than opening an empty
+                                  // detail screen. Task 2 is what starts
+                                  // populating `sessionId`.
+                                  onViewSession: _state.sessionId == null
+                                      ? null
+                                      : () => unawaited(_openThisSession()),
+                                  onBackToSetup: () =>
+                                      Navigator.of(context).maybePop(),
                                 ),
-                              const SizedBox(height: 32), // xl
-                              // The focus slot. Its three occupants swap by
-                              // phase and the question card is HIDDEN for two
-                              // of them (D-22): during the 3·2·1 there is
-                              // nothing to read yet, and at the end there is
-                              // nothing left to answer.
-                              if (displayPhase == PracticePhase.getReady)
-                                _CountdownGlyph(value: _state.countdownSeconds)
-                              else if (isComplete)
-                                _CompletionHeadline(
-                                  answeredCount: _state.answeredCount,
-                                )
-                              else
-                                _QuestionCard(
-                                  question: _state.currentQuestion,
-                                ),
-                              const SizedBox(height: 48), // 2xl
-                              // Every phase renders exactly one control here —
-                              // the mapping is total and exhaustively tested,
-                              // so no phase can leave this screen controlless.
-                              PhaseControl(
-                                phase: _state.phase,
-                                onStop: () =>
-                                    unawaited(_state.stopRecording()),
-                                onStart: () =>
-                                    unawaited(_state.startNewQuestion()),
-                                onResume: () => unawaited(_state.resume()),
-                                recordingSecondsRemaining:
-                                    _state.recordingSecondsRemaining,
-                                // "Get ready…" only for the session's own
-                                // 3·2·1; every later one counts INTO a
-                                // question, so it says "Next question…". `k`
-                                // has already moved by then (LOOP-07).
-                                isFirstQuestion: _state.questionNumber == 1,
-                                // Null until the session has a committed
-                                // `sessions` row (D-26), which renders the
-                                // button DISABLED rather than opening an empty
-                                // detail screen. Task 2 is what starts
-                                // populating `sessionId`.
-                                onViewSession: _state.sessionId == null
-                                    ? null
-                                    : () => unawaited(_openThisSession()),
-                                onBackToSetup: () =>
-                                    Navigator.of(context).maybePop(),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         );
       },
+    );
+  }
+}
+
+/// The single early-exit confirmation (CTRL-03 / UI-SPEC E11).
+///
+/// Pops `true` for the one destructive action and `false` for the safe one; a
+/// barrier tap or a back gesture closes it with `null`, which
+/// [_PracticeScreenState._requestStop] treats identically to the safe one.
+///
+/// `scrollable: true` is the E11/overflow rule: at the largest OS text-scale
+/// setting the body must scroll INSIDE the dialog rather than push the two
+/// actions off-screen.
+class _StopConfirmationDialog extends StatelessWidget {
+  const _StopConfirmationDialog({required this.answeredCount});
+
+  /// COMMITTED answers, never questions attempted — the dialog may only
+  /// promise what the database actually holds.
+  final int answeredCount;
+
+  /// The three bodies, and nothing else about this dialog, vary with `N`.
+  ///
+  /// **The `N = 0` string is PLANNER-RESOLVED copy.** The UI-SPEC Copywriting
+  /// Contract locks bodies for `N = 1` and `N >= 2` only, yet Stop is enabled
+  /// from the first frame of a session — before any answer is committed. The
+  /// gap is recorded as ⚠ unresolved at UI-SPEC E11/empty, and this is its
+  /// resolution, adopted verbatim from that entry's own proposal. It is written
+  /// down here so nobody re-invents user-facing copy; do not reword it without
+  /// updating `02-UI-SPEC.md`.
+  String get _body {
+    if (answeredCount == 0) return 'Nothing has been recorded yet.';
+    if (answeredCount == 1) {
+      return "Your 1 answer is already saved — you just won't finish the rest.";
+    }
+    return 'Your $answeredCount answers are already saved — '
+        "you just won't finish the rest.";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return AlertDialog(
+      key: const Key('practice-stop-dialog'),
+      // Ivory, the app's dominant surface — the peach `colorScheme.surface` is
+      // the CARD colour, and a peach dialog over a peach question card would
+      // read as one continuous plane.
+      backgroundColor: theme.scaffoldBackgroundColor,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      scrollable: true,
+      title: Text('End this session?', style: theme.textTheme.headlineSmall),
+      content: Text(_body, style: theme.textTheme.bodyLarge),
+      actions: [
+        // The destructive action, deliberately the RECESSIVE one: a text
+        // button, in warm red, left of the dominant safe choice.
+        TextButton(
+          key: const Key('practice-stop-confirm'),
+          onPressed: () => Navigator.of(context).pop(true),
+          style: TextButton.styleFrom(
+            foregroundColor: theme.colorScheme.error,
+            // Comfortably above the 44px touch-target floor even as a text
+            // button.
+            minimumSize: const Size(64, 48),
+          ),
+          child: Text(
+            'End session',
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: theme.colorScheme.error,
+            ),
+          ),
+        ),
+        // The safe path is the visually dominant one, and the one a stray tap
+        // is most likely to land on.
+        FilledButton(
+          key: const Key('practice-stop-cancel'),
+          onPressed: () => Navigator.of(context).pop(false),
+          style: FilledButton.styleFrom(minimumSize: const Size(64, 48)),
+          child: Text('Keep going', style: theme.textTheme.labelLarge),
+        ),
+      ],
     );
   }
 }
@@ -447,9 +625,10 @@ class _ErrorBanner extends StatelessWidget {
                 // floor even though it is a text button.
                 minimumSize: const Size(64, 48),
               ),
-              child: Text('Retry', style: theme.textTheme.labelLarge?.copyWith(
-                color: error,
-              )),
+              child: Text(
+                'Retry',
+                style: theme.textTheme.labelLarge?.copyWith(color: error),
+              ),
             ),
           ),
         ],

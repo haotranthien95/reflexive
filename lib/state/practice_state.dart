@@ -277,6 +277,12 @@ class PracticeState extends ChangeNotifier {
   /// does not confirm it resumed routes to [_fail] rather than publishing a
   /// running session over a still-frozen microphone.
   Future<void> resume() async {
+    // An explicit Resume also cancels a pause that was DEFERRED by the race in
+    // [pause]. Without this, a Stop dialog opened during `arming` or `saving`
+    // and then dismissed with "Keep going" would leave the deferred request
+    // armed, freezing the session at the next countdown seconds after the user
+    // explicitly chose to keep going.
+    _pendingPauseRequest = false;
     if (phase != PracticePhase.paused) return;
 
     final PracticePhase frozen = _phaseBeforePause ?? PracticePhase.getReady;
@@ -298,6 +304,40 @@ class PracticeState extends ChangeNotifier {
 
     _phaseBeforePause = null;
     phase = frozen;
+    _notify();
+  }
+
+  /// Ends the session from a CONFIRMED Stop (CTRL-03 / D-27).
+  ///
+  /// Deliberately routes through the very same [_enterComplete] a naturally
+  /// finished session takes: a session stopped early reaches exactly the state a
+  /// completed one does, only with a lower count, and the copy never frames
+  /// stopping early as a failure. Two completion transitions is how the two
+  /// paths would drift apart.
+  ///
+  /// Only reachable with at least one committed answer — a Stop confirmed at
+  /// zero answers pops straight back to Setup instead (D-26), because there is
+  /// nothing to view and nothing was ever written.
+  void completeEarly() {
+    // Whatever clock was live is over: the session is.
+    _countdown?.cancel();
+    _countdown = null;
+    _phaseBeforePause = null;
+    _pendingPauseRequest = false;
+    recordingSecondsRemaining = null;
+    // The answer still being captured is deliberately DISCARDED, never
+    // committed: the dialog promised only the answers already saved, and this
+    // one was interrupted mid-sentence by the user's own choice. Stopping the
+    // recorder here is what keeps the microphone from staying live behind the
+    // completion screen; the unreferenced .m4a is swept by the next launch's
+    // `pruneOrphanRecordings()`, exactly as any abandoned recording is.
+    unawaited(recordingService.stop().catchError((Object _) => null));
+    _enterComplete();
+  }
+
+  /// The ONE transition into the completion state (D-27).
+  void _enterComplete() {
+    phase = PracticePhase.complete;
     _notify();
   }
 
@@ -408,8 +448,9 @@ class PracticeState extends ChangeNotifier {
   Future<void> startNewQuestion() {
     final inFlight = _startInFlight;
     if (inFlight != null) return inFlight;
-    final started =
-        _startNewQuestion().whenComplete(() => _startInFlight = null);
+    final started = _startNewQuestion().whenComplete(
+      () => _startInFlight = null,
+    );
     _startInFlight = started;
     return started;
   }
@@ -434,7 +475,8 @@ class PracticeState extends ChangeNotifier {
       // The random suffix is load-bearing: two recordings starting inside the
       // same millisecond would otherwise share a file name and one would
       // silently overwrite the other's saved answer.
-      final fileName = '${DateTime.now().millisecondsSinceEpoch}'
+      final fileName =
+          '${DateTime.now().millisecondsSinceEpoch}'
           '_${_random.nextInt(1 << 20)}.m4a';
       final absolutePath = p.join(dir.path, fileName);
 
@@ -550,7 +592,8 @@ class PracticeState extends ChangeNotifier {
     }
 
     final relativePath =
-        _currentRelativePath ?? recordingRelativePath(p.basename(finalizedPath));
+        _currentRelativePath ??
+        recordingRelativePath(p.basename(finalizedPath));
     _currentRelativePath = null;
 
     try {
@@ -611,8 +654,9 @@ class PracticeState extends ChangeNotifier {
           // answer can be up to 120 s (SETUP-05), and a 65 s bound would trip
           // halfway through its own replay. The bound is freezable and excludes
           // paused time.
-          completionTimeout:
-              replayCompletionTimeoutFor(Duration(seconds: config.answerSeconds)),
+          completionTimeout: replayCompletionTimeoutFor(
+            Duration(seconds: config.answerSeconds),
+          ),
         );
       } catch (_) {
         // Cosmetic only. See above — never a reason to strand the loop.
@@ -624,8 +668,7 @@ class PracticeState extends ChangeNotifier {
     // `questionNumber`. A save failure at the last question therefore leaves the
     // session one answer short and does not fake a completion (D-27).
     if (answeredCount >= config.questionCount) {
-      phase = PracticePhase.complete;
-      _notify();
+      _enterComplete();
       return;
     }
 
