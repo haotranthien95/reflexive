@@ -14,19 +14,11 @@ import 'package:englishreflex/utils/audio_paths.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// The topics these tests drive, standing in for whatever is in the real bank.
-///
-/// Mirrors the old `kSubjects` constant so the topic keys every pre-existing
-/// test taps (`setup-topic-Travel`, `setup-topic-Daily life`) keep resolving.
-/// Already in the case-insensitive sorted order [normalizeSubjects] produces,
-/// because `SetupScreen` renders its source's list verbatim and does not sort.
-const List<String> _kTestSubjects = <String>[
-  'Daily life',
-  'Food & health',
-  'Opinions',
-  'Travel',
-  'Work & study',
-];
+// [kFixtureSubjects] is the topic list these tests drive, standing in for
+// whatever is in the real bank. It moved out of this file and into `fixtures/`
+// when plan 03-03 retired the shipped `kSubjects` placeholder, so the one set of
+// stand-in bank data is shared rather than mirrored per test file.
+import '../fixtures/questions.dart';
 
 /// The one scripted [QuestionSource] behind every read state D-47 puts behind
 /// the seam — loaded, empty, could-not-load and zero-result, for both reads.
@@ -55,7 +47,7 @@ class FakeQuestionSource implements QuestionSource {
     List<Object>? questionOutcomes,
     this.holdSubjects = false,
     this.holdQuestions = false,
-  })  : subjectOutcomes = subjectOutcomes ?? <Object>[_kTestSubjects],
+  })  : subjectOutcomes = subjectOutcomes ?? <Object>[kFixtureSubjects],
         questionOutcomes =
             questionOutcomes ?? <Object>[const <String>['A fake prompt.']];
 
@@ -576,7 +568,7 @@ void main() {
 
       expect(find.byKey(const Key('setup-topics-loading')), findsNothing);
       expect(find.byType(CheckboxListTile),
-          findsNWidgets(_kTestSubjects.length));
+          findsNWidgets(kFixtureSubjects.length));
       expect(statesPresent(tester), 1);
     });
 
@@ -636,7 +628,7 @@ void main() {
       await pumpSetup(tester);
 
       expect(find.byType(CheckboxListTile),
-          findsNWidgets(_kTestSubjects.length));
+          findsNWidgets(kFixtureSubjects.length));
       expect(find.byKey(const Key('setup-start-blocked')), findsOneWidget);
       expect(statesPresent(tester), 1);
     });
@@ -644,7 +636,7 @@ void main() {
     testWidgets('Try again re-issues the read and returns the card to loading '
         'before it resolves', (tester) async {
       final source = FakeQuestionSource(
-        subjectOutcomes: <Object>[_kUnreachable, _kTestSubjects],
+        subjectOutcomes: <Object>[_kUnreachable, kFixtureSubjects],
         holdSubjects: true,
       );
       await pumpSetup(tester, source: source);
@@ -669,21 +661,21 @@ void main() {
       await tester.pump();
 
       expect(find.byType(CheckboxListTile),
-          findsNWidgets(_kTestSubjects.length));
+          findsNWidgets(kFixtureSubjects.length));
       expect(statesPresent(tester), 1);
     });
 
     testWidgets('a background refresh shows no spinner, and a failed one keeps '
         'the last-known topics on screen (D-35)', (tester) async {
       final source = FakeQuestionSource(
-        subjectOutcomes: <Object>[_kTestSubjects, _kUnreachable],
+        subjectOutcomes: <Object>[kFixtureSubjects, _kUnreachable],
         holdSubjects: true,
       );
       await pumpSetup(tester, source: source);
       source.releaseSubjects();
       await tester.pump();
       expect(find.byType(CheckboxListTile),
-          findsNWidgets(_kTestSubjects.length));
+          findsNWidgets(kFixtureSubjects.length));
 
       // Leave Setup and come back — D-35's re-read, driven by the History push.
       await tester.tap(find.byTooltip('Exercise History'));
@@ -696,7 +688,7 @@ void main() {
       // flicker the checkboxes on every return from History.
       expect(find.byKey(const Key('setup-topics-loading')), findsNothing);
       expect(find.byType(CheckboxListTile),
-          findsNWidgets(_kTestSubjects.length));
+          findsNWidgets(kFixtureSubjects.length));
 
       source.releaseSubjects();
       await tester.pump();
@@ -704,7 +696,7 @@ void main() {
       // It failed, and that changed nothing the user can see.
       expect(find.byKey(const Key('setup-topics-error')), findsNothing);
       expect(find.byType(CheckboxListTile),
-          findsNWidgets(_kTestSubjects.length));
+          findsNWidgets(kFixtureSubjects.length));
       expect(statesPresent(tester), 1);
     });
 

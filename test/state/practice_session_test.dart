@@ -18,6 +18,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../fixtures/questions.dart';
+// The one scripted `QuestionSource` in the suite, imported rather than
+// re-declared. A second implementation of the seam here would be a second model
+// of how a read succeeds, fails or comes back empty — free to drift from the one
+// the Setup states are actually tested against.
+import '../screens/setup_screen_test.dart' show FakeQuestionSource;
+
 // The wake seam's fake, imported rather than re-declared: these cases construct
 // a real `PracticeScreen`, which would otherwise build the production
 // controller and reach a platform channel this binding has no handler for.
@@ -440,12 +447,14 @@ void main() {
           databaseHelper: databaseHelper,
           recordingService: recordingService,
           audioPlayerService: FakeAudioPlayerService(calls),
-          // The bank, injected rather than reached for. `PlaceholderQuestionSource`
-          // still answers with `kSubjects` and `kQuestions` and completes
-          // synchronously, so this end-to-end path keeps asserting on the exact
-          // prompts it always did while the production source stays a Firestore
-          // handle no host test may construct.
-          questionSource: const PlaceholderQuestionSource(),
+          // The bank, injected rather than reached for. The scripted fake
+          // answers with [kFixtureSubjects] and [kFixtureQuestions] and
+          // completes synchronously, so this end-to-end path keeps asserting on
+          // the exact prompts it always did while the production source stays a
+          // Firestore handle no host test may construct (D-47).
+          questionSource: FakeQuestionSource(
+            questionOutcomes: <Object>[kFixtureQuestions],
+          ),
         ),
       ),
     );
@@ -483,7 +492,7 @@ void main() {
     expect(find.byKey(const Key('practice-countdown-glyph')), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
     expect(find.text('Get ready…'), findsOneWidget);
-    expect(find.text(kQuestionsFirstPrompt), findsNothing);
+    expect(find.text(kFixtureFirstPrompt), findsNothing);
 
     await tester.pump(const Duration(seconds: 1));
     expect(find.text('2'), findsOneWidget);
@@ -498,7 +507,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const Key('practice-countdown-glyph')), findsNothing);
-    expect(find.text(kQuestionsFirstPrompt), findsOneWidget);
+    expect(find.text(kFixtureFirstPrompt), findsOneWidget);
 
     // LOOP-02 / D-20: the microphone stays cold for the WHOLE `t` countdown.
     // `t` is the Setup default of 5 s, so this lands at t-1.
@@ -545,7 +554,7 @@ void main() {
     final savedAnswers =
         await databaseHelper.listAnswersForSession(sessions.single.id!);
     expect(savedAnswers, hasLength(1));
-    expect(savedAnswers.single.questionText, kQuestionsFirstPrompt);
+    expect(savedAnswers.single.questionText, kFixtureFirstPrompt);
     expect(savedAnswers.single.audioPath, startsWith('$kRecordingsDirName/'));
 
     // RETARGETED BY PLAN 02-02. Plan 02-01's tracer ended the session on the
@@ -566,7 +575,7 @@ void main() {
     );
     expect(find.byKey(const Key('practice-countdown-glyph')), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
-    expect(find.text(kQuestionsFirstPrompt), findsNothing);
+    expect(find.text(kFixtureFirstPrompt), findsNothing);
 
     // Tear the screen down: the inter-question countdown is LIVE, and the test
     // binding fails any test that ends with a pending timer.
@@ -607,7 +616,7 @@ void main() {
     FakeAudioPlayerService? player,
   }) {
     return PracticeState(
-      questions: kQuestions,
+      questions: kFixtureQuestions,
       recordingService: recordingService,
       audioPlayerService: player ?? FakeAudioPlayerService(calls),
       databaseHelper: helper ?? databaseHelper,
@@ -726,7 +735,7 @@ void main() {
     expect(answers, hasLength(3));
     expect(
       answers.map((a) => a.questionText).toList(),
-      kQuestions.take(3).toList(),
+      kFixtureQuestions.take(3).toList(),
     );
 
     state.dispose();
@@ -735,7 +744,7 @@ void main() {
   testWidgets('4 — a session longer than the bank cycles it in sequential order '
       'and still completes at questionCount', (tester) async {
     // One past the bank, so the wrap is observed at its exact boundary (D-23).
-    final int count = kQuestions.length + 1;
+    final int count = kFixtureQuestions.length + 1;
     final state = newState(config: configFor(questionCount: count));
 
     await state.startSession();
@@ -750,11 +759,11 @@ void main() {
     final answers =
         await databaseHelper.listAnswersForSession(sessions.single.id!);
     expect(answers, hasLength(count));
-    expect(answers.first.questionText, kQuestions.first);
-    expect(answers[kQuestions.length - 1].questionText, kQuestions.last);
+    expect(answers.first.questionText, kFixtureQuestions.first);
+    expect(answers[kFixtureQuestions.length - 1].questionText, kFixtureQuestions.last);
     expect(
       answers.last.questionText,
-      kQuestions.first,
+      kFixtureQuestions.first,
       reason: 'the bank must wrap to its head, not cap the session',
     );
 
@@ -905,7 +914,7 @@ void main() {
       expect(answers, hasLength(count), reason: 'count=$count');
       expect(
         answers.map((a) => a.questionText).toList(),
-        List<String>.generate(count, (i) => questionAt(kQuestions, i)),
+        List<String>.generate(count, (i) => questionAt(kFixtureQuestions, i)),
         reason: 'sequential bank order, wrapping rather than capping (D-23)',
       );
 
@@ -936,7 +945,7 @@ void main() {
       final service = RecordingService(backend: backend);
       return (
         state: PracticeState(
-          questions: kQuestions,
+          questions: kFixtureQuestions,
           recordingService: service,
           audioPlayerService: player ?? FakeAudioPlayerService(calls),
           databaseHelper: helper ?? databaseHelper,
@@ -1214,7 +1223,7 @@ void main() {
         PracticePhase.complete,
       };
       final state = PracticeState(
-        questions: kQuestions,
+        questions: kFixtureQuestions,
         recordingService: recordingService,
         audioPlayerService: FakeAudioPlayerService(calls),
         databaseHelper: databaseHelper,
@@ -1260,7 +1269,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: PracticeScreen(
-            questions: kQuestions,
+            questions: kFixtureQuestions,
             config: config,
             recordingService: service,
             audioPlayerService: FakeAudioPlayerService(calls),
@@ -1298,7 +1307,7 @@ void main() {
       expect(find.text('0:07 left'), findsOneWidget);
       // …and the question card is still there — the banner is docked ABOVE the
       // content, never instead of it.
-      expect(find.text(kQuestionsFirstPrompt), findsOneWidget);
+      expect(find.text(kFixtureFirstPrompt), findsOneWidget);
       expect(
           find.byKey(kPhaseControlKeys[PracticePhase.paused]!), findsOneWidget);
       expect(find.text('RESUME'), findsOneWidget);
@@ -1361,7 +1370,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: PracticeScreen(
-            questions: kQuestions,
+            questions: kFixtureQuestions,
             config: interruptedConfig,
             recordingService: RecordingService(backend: backend),
             audioPlayerService: player,
@@ -1473,7 +1482,7 @@ void main() {
       final backend = FakeRecorderBackend();
       final service = RecordingService(backend: backend);
       final state = PracticeState(
-        questions: kQuestions,
+        questions: kFixtureQuestions,
         recordingService: service,
         audioPlayerService: FakeAudioPlayerService(calls),
         databaseHelper: databaseHelper,
@@ -1534,7 +1543,7 @@ void main() {
       final backend = FakeRecorderBackend();
       final service = RecordingService(backend: backend);
       final state = PracticeState(
-        questions: kQuestions,
+        questions: kFixtureQuestions,
         recordingService: service,
         audioPlayerService: FakeAudioPlayerService(calls),
         databaseHelper: databaseHelper,
@@ -1566,7 +1575,7 @@ void main() {
       final backend = FakeRecorderBackend();
       final service = RecordingService(backend: backend);
       final state = PracticeState(
-        questions: kQuestions,
+        questions: kFixtureQuestions,
         recordingService: service,
         audioPlayerService: FakeAudioPlayerService(calls),
         databaseHelper: databaseHelper,
@@ -1628,7 +1637,7 @@ void main() {
         'answers under exactly one session row', () async {
       final helper = DatabaseHelper();
       final state = PracticeState(
-        questions: kQuestions,
+        questions: kFixtureQuestions,
         recordingService: recordingService,
         audioPlayerService: FakeAudioPlayerService(calls),
         databaseHelper: helper,
@@ -1671,7 +1680,7 @@ void main() {
       expect(answers, hasLength(3));
       expect(
         answers.map((a) => a.questionText).toList(),
-        kQuestions.take(3).toList(),
+        kFixtureQuestions.take(3).toList(),
       );
       for (final answer in answers) {
         expect(answer.audioPath, startsWith('$kRecordingsDirName/'));
@@ -1679,7 +1688,3 @@ void main() {
     });
   });
 }
-
-/// The first prompt of the placeholder bank — the one a sequential draw at
-/// question 1 must produce (D-23).
-const String kQuestionsFirstPrompt = 'What did you do this morning?';

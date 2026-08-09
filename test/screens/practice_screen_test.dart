@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:englishreflex/data/questions.dart';
 import 'package:englishreflex/models/session_config.dart';
 import 'package:englishreflex/screens/practice_screen.dart';
 import 'package:englishreflex/services/recording_service.dart';
@@ -15,12 +14,9 @@ import 'package:flutter_test/flutter_test.dart';
 // are imported with an explicit `show` rather than copied: a second copy of
 // `InMemoryDatabaseHelper` would be a second model of the D-26 lazy-session
 // rule, free to drift from the one the loop is actually tested against.
+import '../fixtures/questions.dart';
 import '../state/practice_session_test.dart'
-    show
-        FakeAudioPlayerService,
-        FakeRecorderBackend,
-        InMemoryDatabaseHelper,
-        kQuestionsFirstPrompt;
+    show FakeAudioPlayerService, FakeRecorderBackend, InMemoryDatabaseHelper;
 import '../services/screen_wake_controller_test.dart'
     show FakeScreenWakeController;
 
@@ -122,7 +118,7 @@ void main() {
       MaterialApp(
         home: _SetupStub(
           session: PracticeScreen(
-            questions: kQuestions,
+            questions: kFixtureQuestions,
             config: sessionConfig,
             recordingService: recordingService,
             audioPlayerService: FakeAudioPlayerService(calls),
@@ -249,7 +245,7 @@ void main() {
       await tester.pump(const Duration(seconds: 60));
       expect(find.text('1'), findsOneWidget,
           reason: 'a clock ran while the user was deciding');
-      expect(find.text(kQuestionsFirstPrompt), findsNothing,
+      expect(find.text(kFixtureFirstPrompt), findsNothing,
           reason: 'the frozen countdown advanced into the question');
 
       await tester.tap(find.byKey(const Key('practice-stop-cancel')));
@@ -260,7 +256,7 @@ void main() {
       // …and it continues rather than restarting.
       await tester.pump(const Duration(seconds: 1));
       await settle(tester);
-      expect(find.text(kQuestionsFirstPrompt), findsOneWidget,
+      expect(find.text(kFixtureFirstPrompt), findsOneWidget,
           reason: 'the countdown did not continue after the dialog closed');
 
       await closeSession(tester);
@@ -286,7 +282,7 @@ void main() {
 
       await tester.pump(const Duration(seconds: 1));
       await settle(tester);
-      expect(find.text(kQuestionsFirstPrompt), findsOneWidget);
+      expect(find.text(kFixtureFirstPrompt), findsOneWidget);
 
       await closeSession(tester);
     });
