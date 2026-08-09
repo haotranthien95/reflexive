@@ -18,6 +18,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+// The wake seam's fake, imported rather than re-declared: these cases construct
+// a real `PracticeScreen`, which would otherwise build the production
+// controller and reach a platform channel this binding has no handler for.
+import '../services/screen_wake_controller_test.dart'
+    show FakeScreenWakeController;
+
 /// A recorder that touches no platform channel, so the REAL loop — its
 /// countdowns, its phase transitions, its write ordering — runs on the host.
 class FakeRecordingService extends RecordingService {
@@ -1304,6 +1310,287 @@ void main() {
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // D-31: an interruption FINALIZES AND COMMITS the in-flight answer before the
+  // session parks.
+  //
+  // Losing a spoken answer to a phone call is the failure this whole path
+  // exists to prevent, so every case here asserts the committed ROW — not the
+  // phase, not the banner alone. A handler that parked paused without
+  // committing would satisfy a phase-only assertion and still lose the answer.
+  //
+  // Both producers are exercised: the app being backgrounded (the lifecycle
+  // path) and an ANSWERED call (the audio path, which is the only way a
+  // native-initiated pause ever reaches Dart).
+  // ───────────────────────────────────────────────────────────────────────────
+  group('interruption commits first, then parks', () {
+    const SessionConfig interruptedConfig = SessionConfig(
+      topics: <String>['Daily life'],
+      level: 'B1',
+      questionCount: 3,
+      thinkingSeconds: 3,
+      // Deliberately ON: the auto-replay must be SKIPPED on this path, and a
+      // session with it off could not tell "skipped" from "never configured".
+      autoReplay: true,
+      answerSeconds: 10,
+    );
+
+    /// Pumps a real screen into `recording`, three seconds into the answer.
+    Future<FakeRecorderBackend> reachRecordingOnScreen(
+      WidgetTester tester,
+      FakeAudioPlayerService player,
+    ) async {
+      tester.view.physicalSize = const Size(400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final backend = FakeRecorderBackend();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PracticeScreen(
+            config: interruptedConfig,
+            recordingService: RecordingService(backend: backend),
+            audioPlayerService: player,
+            databaseHelper: databaseHelper,
+            screenWakeController: FakeScreenWakeController(),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(seconds: kGetReadySeconds));
+      await tester.pump(Duration(seconds: interruptedConfig.thinkingSeconds));
+      await settle(tester);
+      // Three seconds into a 10 s answer: genuinely mid-sentence.
+      await tester.pump(const Duration(seconds: 3));
+      return backend;
+    }
+
+    /// Asserts the whole D-31 outcome: one committed answer, the session parked
+    /// paused, the banner that CLAIMS the save on screen, and no replay.
+    Future<void> expectParkedWithAnswerSaved(
+      WidgetTester tester,
+      FakeAudioPlayerService player,
+    ) async {
+      final sessions = await databaseHelper.listSessions();
+      expect(sessions, hasLength(1),
+          reason: 'the in-flight answer was not committed before parking');
+      expect(await databaseHelper.listAnswersForSession(sessions.single.id!),
+          hasLength(1));
+
+      expect(find.byKey(const Key('practice-paused-banner')), findsOneWidget);
+      expect(
+        find.text('Paused — your answer was saved when the app was interrupted.'),
+        findsOneWidget,
+        reason: 'the interrupted variant is the one that promises the save',
+      );
+      expect(find.text('Paused — nothing is being recorded.'), findsNothing);
+      expect(find.text('RESUME'), findsOneWidget,
+          reason: 'a parked session must offer the way forward');
+      expect(player.calls, isNot(contains('play')),
+          reason: 'the auto-replay must be SKIPPED on the interruption path');
+    }
+
+    testWidgets('backgrounding mid-recording commits the answer, parks paused, '
+        'and never resumes by itself', (tester) async {
+      final player = FakeAudioPlayerService(calls, databaseHelper: databaseHelper);
+      final backend = await reachRecordingOnScreen(tester, player);
+
+      // AppLifecycleListener asserts on illegal transitions and `flutter test`
+      // runs with asserts live, so the chain is WALKED, not jumped:
+      // resumed → inactive → hidden is what fires the hidden transition.
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      await settle(tester);
+
+      await expectParkedWithAnswerSaved(tester, player);
+
+      // Coming back does NOT restart anything — resuming is always an explicit
+      // tap, and two minutes of waiting must change nothing.
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await settle(tester);
+      await tester.pump(const Duration(seconds: 120));
+      await settle(tester);
+
+      expect(find.text('RESUME'), findsOneWidget,
+          reason: 'the session resumed itself on returning to the foreground');
+      expect(backend.calls.where((c) => c == 'start'), hasLength(1),
+          reason: 'a second recorder was armed without the user asking');
+      expect(player.calls, isNot(contains('play')));
+
+      // The explicit tap continues the SESSION at the next question — the
+      // answer that was interrupted is finished, not resumed.
+      await tester.ensureVisible(find.text('RESUME'));
+      await settle(tester);
+      await tester.tap(find.text('RESUME'));
+      await settle(tester);
+
+      expect(find.text('Question 2 of 3'), findsOneWidget);
+      expect(find.byKey(const Key('practice-countdown-glyph')), findsOneWidget);
+      expect(find.byKey(const Key('practice-paused-banner')), findsNothing);
+      expect(player.calls, isNot(contains('play')),
+          reason: 'resuming must not start the replay that was skipped');
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
+
+    testWidgets('an OS-initiated recorder pause — an ANSWERED call — produces '
+        'exactly the same parked result', (tester) async {
+      final player = FakeAudioPlayerService(calls, databaseHelper: databaseHelper);
+      final backend = await reachRecordingOnScreen(tester, player);
+
+      // The native side pausing the recorder of its own accord. This is the
+      // ONLY way an answered call ever reaches Dart, and the app never called
+      // pause() itself here.
+      backend.paused = true;
+      backend.pausedChanges.add(true);
+      await settle(tester);
+
+      await expectParkedWithAnswerSaved(tester, player);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
+
+    testWidgets('both signals arriving together collapse onto ONE handler and '
+        'commit exactly one answer', (tester) async {
+      // An answered call taken from the lock screen fires both producers at
+      // once. Two handlers would run two stopRecording() tails.
+      final backend = FakeRecorderBackend();
+      final service = RecordingService(backend: backend);
+      final state = PracticeState(
+        recordingService: service,
+        audioPlayerService: FakeAudioPlayerService(calls),
+        databaseHelper: databaseHelper,
+        config: interruptedConfig,
+      );
+
+      await state.startSession();
+      await tester.pump(const Duration(seconds: kGetReadySeconds));
+      await tester.pump(Duration(seconds: interruptedConfig.thinkingSeconds));
+      await settle(tester);
+      expect(state.phase, PracticePhase.recording);
+
+      unawaited(state.handleInterruption());
+      unawaited(state.handleInterruption());
+      await settle(tester);
+
+      expect(state.phase, PracticePhase.paused);
+      expect(state.pausedReason, PausedReason.interrupted);
+      expect(state.answeredCount, 1);
+      expect(databaseHelper.answers, hasLength(1),
+          reason: 'the second signal committed a duplicate answer');
+      expect(backend.calls.where((c) => c == 'stop'), hasLength(1));
+
+      state.dispose();
+    });
+
+    testWidgets('an interruption during a COUNTDOWN parks paused without '
+        'writing anything at all', (tester) async {
+      // Nothing was captured, so nothing may be committed — but the session
+      // must still freeze, and it must still read as an interruption.
+      final state = newState(config: configFor(questionCount: 2));
+
+      await state.startSession();
+      await tester.pump(const Duration(seconds: 1));
+      expect(state.countdownSeconds, 2);
+
+      await state.handleInterruption();
+      expect(state.phase, PracticePhase.paused);
+      expect(state.pausedReason, PausedReason.interrupted);
+
+      await tester.pump(const Duration(seconds: 60));
+      expect(state.countdownSeconds, 2, reason: 'the countdown ran while parked');
+      expect(await databaseHelper.listSessions(), isEmpty);
+
+      // Resuming continues the same countdown rather than skipping a question.
+      await state.resume();
+      expect(state.phase, PracticePhase.getReady);
+      expect(state.pausedReason, isNull);
+      await tester.pump(const Duration(seconds: 1));
+      expect(state.countdownSeconds, 1);
+
+      state.dispose();
+    });
+
+    testWidgets('an interruption on the FINAL answer completes the session '
+        'rather than parking it', (tester) async {
+      // LOOP-08. Parking here would leave a RESUME pill with nothing to do.
+      final backend = FakeRecorderBackend();
+      final service = RecordingService(backend: backend);
+      final state = PracticeState(
+        recordingService: service,
+        audioPlayerService: FakeAudioPlayerService(calls),
+        databaseHelper: databaseHelper,
+        config: configFor(questionCount: 1, answerSeconds: 10),
+      );
+
+      await state.startSession();
+      await tester.pump(const Duration(seconds: kGetReadySeconds));
+      await tester.pump(Duration(seconds: state.config.thinkingSeconds));
+      await settle(tester);
+      expect(state.phase, PracticePhase.recording);
+
+      await state.handleInterruption();
+      await settle(tester);
+
+      expect(state.phase, PracticePhase.complete);
+      expect(state.answeredCount, 1);
+      expect(databaseHelper.answers, hasLength(1));
+
+      state.dispose();
+    });
+
+    testWidgets('an ordinary Pause is NEVER reported as an interruption, even '
+        'though the recorder announces both on the same stream', (tester) async {
+      // The regression guard for the race this path created: `record` reports
+      // "now paused" identically whether the OS paused it or the app did, and
+      // stream delivery beats pause() publishing the paused phase. Mislabelling
+      // it would show a banner promising a save that never happened.
+      final backend = FakeRecorderBackend();
+      final service = RecordingService(backend: backend);
+      final state = PracticeState(
+        recordingService: service,
+        audioPlayerService: FakeAudioPlayerService(calls),
+        databaseHelper: databaseHelper,
+        config: configFor(questionCount: 2, answerSeconds: 10),
+      );
+      // The screen's producer, wired exactly as `PracticeScreen` wires it.
+      final sub = service.onPausedChanged
+          .where((bool paused) => paused)
+          .listen((_) => unawaited(state.handleInterruption()));
+
+      await state.startSession();
+      await tester.pump(const Duration(seconds: kGetReadySeconds));
+      await tester.pump(Duration(seconds: state.config.thinkingSeconds));
+      await settle(tester);
+      expect(state.phase, PracticePhase.recording);
+
+      await state.pause();
+      await settle(tester);
+
+      expect(state.phase, PracticePhase.paused);
+      expect(state.pausedReason, PausedReason.user,
+          reason: "the app's OWN pause was misread as an interruption");
+      expect(await databaseHelper.listSessions(), isEmpty,
+          reason: 'an ordinary Pause must not finalize and commit the answer');
+
+      // …and a GENUINE interruption arriving later is still recognised.
+      await state.resume();
+      await settle(tester);
+      expect(state.phase, PracticePhase.recording);
+      backend.pausedChanges.add(true);
+      await settle(tester);
+      expect(state.pausedReason, PausedReason.interrupted,
+          reason: 'the consumed self-pause flag swallowed a real interruption');
+
+      // Not awaited: cancelling a broadcast subscription inside a testWidgets
+      // body never returns on the fake clock.
+      unawaited(sub.cancel());
+      state.dispose();
     });
   });
 

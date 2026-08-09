@@ -156,8 +156,13 @@ class _PracticeScreenState extends State<PracticeScreen> {
     // nothing the fake clock drives.
     unawaited(_pausedSub.cancel());
     _state.removeListener(_releaseWakeOnCompletion);
-    _wakeReleased = true;
-    unawaited(_setWake(false));
+    // Guarded, not unconditional: a session that reached its completion state
+    // already released the hold, and releasing an already-released wakelock is
+    // a redundant platform call on a screen that is going away.
+    if (!_wakeReleased) {
+      _wakeReleased = true;
+      unawaited(_setWake(false));
+    }
 
     // Stop any in-flight recording BEFORE tearing the recorder down: leaving
     // the screen must never leave the microphone live. The stop is fire-and-
