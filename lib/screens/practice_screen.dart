@@ -7,6 +7,7 @@ import '../models/session.dart';
 import '../models/session_config.dart';
 import '../services/audio_player_service.dart';
 import '../services/recording_service.dart';
+import '../services/screen_wake_controller.dart';
 import '../state/practice_state.dart';
 import '../widgets/countdown_ring.dart';
 import '../widgets/mascot.dart';
@@ -33,6 +34,7 @@ class PracticeScreen extends StatefulWidget {
     this.recordingService,
     this.audioPlayerService,
     this.databaseHelper,
+    this.screenWakeController,
   });
 
   final SessionConfig config;
@@ -43,6 +45,7 @@ class PracticeScreen extends StatefulWidget {
   final RecordingService? recordingService;
   final AudioPlayerService? audioPlayerService;
   final DatabaseHelper? databaseHelper;
+  final ScreenWakeController? screenWakeController;
 
   @override
   State<PracticeScreen> createState() => _PracticeScreenState();
@@ -50,6 +53,22 @@ class PracticeScreen extends StatefulWidget {
 
 class _PracticeScreenState extends State<PracticeScreen> {
   late final PracticeState _state;
+
+  /// Resolved lazily, so a test that injects a fake never constructs the
+  /// platform channel behind the production implementation.
+  late final ScreenWakeController _wake =
+      widget.screenWakeController ?? const WakelockPlusScreenWakeController();
+
+  /// Decodes the raw lifecycle stream into discrete transitions. Disposed
+  /// BEFORE the recorder teardown chain below.
+  late final AppLifecycleListener _lifecycle;
+
+  /// The second interruption producer: a pause the app did not ask for.
+  late final StreamSubscription<bool> _pausedSub;
+
+  /// True once the wakelock has been released for good (session over or screen
+  /// torn down), so a late lifecycle callback cannot re-acquire it.
+  bool _wakeReleased = false;
 
   /// True while the one confirmation dialog is open.
   ///
@@ -75,10 +94,71 @@ class _PracticeScreenState extends State<PracticeScreen> {
     // rather than later: it must complete before any recording file name is
     // chosen, and Setup is the first screen the user passes through.
     unawaited(_state.startSession());
+
+    // D-30: the session owns the screen for as long as it runs. The default OS
+    // timeout is routinely shorter than one thinking-time-plus-answer cycle, so
+    // without this the screen locks mid-answer.
+    unawaited(_setWake(true));
+    // Releases the hold the moment the session is genuinely over, rather than
+    // holding it until the user navigates away from the completion screen.
+    _state.addListener(_releaseWakeOnCompletion);
+
+    _lifecycle = AppLifecycleListener(
+      // Deliberately the hidden transition (inactive → hidden), NOT inactive:
+      // that one also fires for the notification shade, Control Centre, the app
+      // switcher and an UNANSWERED incoming-call banner, so triggering on it
+      // would pause a session that was never interrupted. An ANSWERED call
+      // arrives on the audio path below instead — the two signals stay cleanly
+      // separated and converge only at the handler.
+      onHide: () {
+        unawaited(_setWake(false));
+        unawaited(_state.handleInterruption());
+      },
+      // Re-acquired on return, or one backgrounding would cost the rest of the
+      // session its wakelock. Guarded, so it is never re-acquired after the
+      // session has ended.
+      onShow: () => unawaited(_setWake(true)),
+    );
+
+    // The second producer: a pause the app did NOT ask for. Filtered to the
+    // true events — the false ones are this app's own resumes coming back.
+    _pausedSub = _state.recordingService.onPausedChanged
+        .where((bool paused) => paused)
+        .listen((_) => unawaited(_state.handleInterruption()));
+  }
+
+  /// The one wakelock call site pair, with the silent-failure contract applied
+  /// once. A wakelock failure is a nuisance, never a user-facing error — this
+  /// phase introduces no new failure string.
+  Future<void> _setWake(bool enabled) async {
+    if (enabled && _wakeReleased) return;
+    try {
+      await (enabled ? _wake.enable() : _wake.disable());
+    } catch (error) {
+      debugPrint('EnglishReflex: the screen wakelock failed: $error');
+    }
+  }
+
+  void _releaseWakeOnCompletion() {
+    if (_wakeReleased || _state.phase != PracticePhase.complete) return;
+    _wakeReleased = true;
+    unawaited(_setWake(false));
   }
 
   @override
   void dispose() {
+    // Torn down BEFORE the recorder chain below: a lifecycle callback or a
+    // recorder state event arriving mid-teardown would drive a handler on a
+    // half-disposed screen.
+    _lifecycle.dispose();
+    // Deliberately NOT awaited. Awaiting a broadcast subscription's cancel()
+    // inside a widget test never returns — the future it yields is completed by
+    // nothing the fake clock drives.
+    unawaited(_pausedSub.cancel());
+    _state.removeListener(_releaseWakeOnCompletion);
+    _wakeReleased = true;
+    unawaited(_setWake(false));
+
     // Stop any in-flight recording BEFORE tearing the recorder down: leaving
     // the screen must never leave the microphone live. The stop is fire-and-
     // forget (dispose cannot await) but its failure is swallowed explicitly
@@ -278,7 +358,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
                   // Same slot, same construction as the error banner. The two are
                   // mutually exclusive by construction: a pause that could not be
                   // confirmed lands in `error`, never in `paused`.
-                  if (isPaused) const _PausedBanner(),
+                  if (isPaused) _PausedBanner(reason: _state.pausedReason),
                   Expanded(
                     // Centred normally, scrollable rather than clipped once the
                     // OS text-scale setting grows the content past the viewport
@@ -542,12 +622,23 @@ class _CompletionHeadline extends StatelessWidget {
 /// CONFIRMED it actually stopped. A pause that could not be confirmed lands in
 /// the error phase instead — so this copy can never appear over a live
 /// microphone.
+/// Two variants, selected by [reason]:
+///   - user-initiated (D-24): `Paused — nothing is being recorded.`
+///   - interrupted (D-31): additionally CLAIMS the answer was saved, which is
+///     only ever rendered on the path that finalized and committed it before
+///     parking. That claim is why the two variants are one widget with one
+///     input rather than two call sites that could each pick the wrong string.
 class _PausedBanner extends StatelessWidget {
-  const _PausedBanner();
+  const _PausedBanner({required this.reason});
+
+  final PausedReason? reason;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final String message = reason == PausedReason.interrupted
+        ? 'Paused — your answer was saved when the app was interrupted.'
+        : 'Paused — nothing is being recorded.';
 
     return Container(
       key: const Key('practice-paused-banner'),
@@ -561,12 +652,7 @@ class _PausedBanner extends StatelessWidget {
           const SizedBox(width: 8), // sm
           // Expanded (not a fixed width) so the copy wraps instead of
           // overflowing at the largest OS text-scale setting.
-          Expanded(
-            child: Text(
-              'Paused — nothing is being recorded.',
-              style: theme.textTheme.labelLarge,
-            ),
-          ),
+          Expanded(child: Text(message, style: theme.textTheme.labelLarge)),
         ],
       ),
     );
