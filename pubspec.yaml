@@ -42,6 +42,20 @@ dependencies:
   google_fonts: ^8.2.1
   wakelock_plus: ^1.7.0
 
+  # The question bank (BANK-01..03). `firebase_core` boots the app against the
+  # project in lib/firebase_options.dart; `cloud_firestore` reads the `questions`
+  # collection. Added with `flutter pub add` so pub resolves the matching pair —
+  # the FlutterFire team version-locks these two and hand-pinning them
+  # independently is how you get a resolution nobody tested.
+  #
+  # These are the reason the release build now requests network access. The
+  # `INTERNET` permission is contributed TRANSITIVELY by cloud_firestore, not
+  # declared in android/app/src/main/AndroidManifest.xml — see that file's
+  # permission comment, and D-39 for why the Phase 1/2 microphone-only posture is
+  # formally retired here rather than left to rot.
+  firebase_core: ^4.13.0
+  cloud_firestore: ^6.8.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

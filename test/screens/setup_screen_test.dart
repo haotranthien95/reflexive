@@ -1,15 +1,75 @@
 import 'dart:io';
 
+import 'package:englishreflex/data/questions.dart';
 import 'package:englishreflex/db/database_helper.dart';
 import 'package:englishreflex/models/session.dart';
 import 'package:englishreflex/models/session_config.dart';
 import 'package:englishreflex/screens/practice_screen.dart';
 import 'package:englishreflex/screens/setup_screen.dart';
 import 'package:englishreflex/services/audio_player_service.dart';
+import 'package:englishreflex/services/firestore_question_source.dart';
 import 'package:englishreflex/services/recording_service.dart';
 import 'package:englishreflex/utils/audio_paths.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// The topics these tests drive, standing in for whatever is in the real bank.
+///
+/// Mirrors the old `kSubjects` constant so the topic keys every pre-existing
+/// test taps (`setup-topic-Travel`, `setup-topic-Daily life`) keep resolving.
+/// Already in the case-insensitive sorted order [normalizeSubjects] produces,
+/// because `SetupScreen` renders its source's list verbatim and does not sort.
+const List<String> _kTestSubjects = <String>[
+  'Daily life',
+  'Food & health',
+  'Opinions',
+  'Travel',
+  'Work & study',
+];
+
+/// A scriptable [QuestionSource] — the seam D-47 puts every read state behind.
+///
+/// **Both methods complete synchronously** (`async` with no real `await`). That
+/// is deliberate and load-bearing for the same reason `_EmptyDatabaseHelper`
+/// exists: `testWidgets` runs on a fake clock that drains microtasks but never
+/// yields to the real event loop, so a `Future.delayed` here would never resolve
+/// and every test in this file would hang on a topics card that never fills.
+class _FakeQuestionSource implements QuestionSource {
+  _FakeQuestionSource({
+    this.bankSubjects = _kTestSubjects,
+    this.bankQuestions = const <String>['A fake prompt.'],
+  });
+
+  final List<String> bankSubjects;
+  final List<String> bankQuestions;
+
+  /// Proves a re-read happened, and how many times.
+  int subjectsCallCount = 0;
+
+  @override
+  Future<List<String>> subjects() async {
+    subjectsCallCount++;
+    return bankSubjects;
+  }
+
+  @override
+  Future<List<String>> questionsFor(SessionConfig config) async =>
+      bankQuestions;
+}
+
+/// A source that fails the test if it is ever asked anything.
+///
+/// Stands in for the production [FirestoreQuestionSource] in the one test that
+/// is about the seam itself rather than about the screen.
+class _ExplodingQuestionSource implements QuestionSource {
+  @override
+  Future<List<String>> subjects() async =>
+      throw StateError('the injected source must be the one that is used');
+
+  @override
+  Future<List<String>> questionsFor(SessionConfig config) async =>
+      throw StateError('the injected source must be the one that is used');
+}
 
 /// A database double with no engine behind it.
 ///
@@ -158,7 +218,14 @@ void main() {
               RecordingService(backend: _SilentRecorderBackend()),
           audioPlayerService:
               AudioPlayerService(backend: _SilentPlaybackBackend()),
-          subjects: subjects,
+          // Injecting a whole source, not a subject list: the subject list moved
+          // behind the `QuestionSource` seam when Phase 3 sourced it from
+          // Firestore. Passing one here is also what proves production's
+          // `FirestoreQuestionSource` is never constructed under `flutter test`
+          // — see the `_ExplodingQuestionSource` test below.
+          questionSource: _FakeQuestionSource(
+            bankSubjects: subjects ?? _kTestSubjects,
+          ),
         ),
       );
 
@@ -176,6 +243,16 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(host(subjects: subjects));
+    // TWO frames, not one. The subject list stopped being a compile-time
+    // constant available on the first frame when Phase 3 sourced it from
+    // Firestore: frame one lands before `_loadSubjects()`'s future has been
+    // drained, so the topics card is still empty. The second frame is where the
+    // topics appear.
+    //
+    // Fixed HERE, in the shared harness, rather than test by test — otherwise
+    // every Setup test in this file would carry the same extra `pump()` and the
+    // next one written would forget it.
+    await tester.pump();
     await tester.pump();
   }
 
@@ -275,6 +352,177 @@ void main() {
       expect(find.text('Import some questions and your topics will show up '
           'here.'), findsOneWidget);
       expect(startEnabled(tester), isFalse);
+    });
+  });
+
+  group('SetupScreen reads its topics from the injected bank (BANK-02)', () {
+    testWidgets('an injected source is the ONLY source consulted — the '
+        'production Firestore one is never constructed', (tester) async {
+      // If `SetupScreen` ever built its own `FirestoreQuestionSource`, this test
+      // would fail on a missing Firebase app rather than on this source's throw
+      // — and either way it would fail, which is the point: no `flutter test`
+      // run may reach a Firestore handle.
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: _testTheme(),
+          home: SetupScreen(
+            databaseHelper: _EmptyDatabaseHelper(),
+            questionSource: _ExplodingQuestionSource(),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      // The injected source threw, that throw was contained and logged, and the
+      // screen is still standing — nothing reached the platform.
+      expect(find.byKey(const Key('setup-start')), findsOneWidget);
+      expect(find.byKey(const Key('setup-topics-empty')), findsOneWidget);
+    });
+
+    testWidgets('the checkboxes are exactly the bank\'s subjects, in the '
+        'order the bank gave them', (tester) async {
+      // `SetupScreen` renders its source's list verbatim: ordering, de-duping
+      // and blank-dropping belong to the source (see `normalizeSubjects`), so
+      // the screen has one job and it is this one.
+      await pumpSetup(
+        tester,
+        subjects: normalizeSubjects(<Object?>[
+          'Travel',
+          'daily life',
+          'Travel', // an exact duplicate: one checkbox
+          '   ', // blank: no checkbox
+          null, // not a String: no checkbox
+          'Work & study',
+        ]),
+      );
+
+      // Case-insensitive sort puts 'daily life' first, before 'Travel'.
+      final topicTitles = tester
+          .widgetList<CheckboxListTile>(find.byType(CheckboxListTile))
+          .map((tile) => (tile.title! as Text).data)
+          .toList();
+      expect(topicTitles, <String>['daily life', 'Travel', 'Work & study']);
+    });
+
+    testWidgets('a single-subject bank renders one checkbox and ticking it '
+        'opens Start', (tester) async {
+      await pumpSetup(tester, subjects: const <String>['Travel']);
+
+      expect(find.byType(CheckboxListTile), findsOneWidget);
+      expect(startEnabled(tester), isFalse);
+
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.pump();
+
+      expect(startEnabled(tester), isTrue);
+    });
+  });
+
+  group('START SESSION carries the query\'s prompts into the loop (BANK-03)',
+      () {
+    /// A host with the bank's *questions* scripted as well as its subjects.
+    Future<void> pumpWithBank(
+      WidgetTester tester,
+      List<String> questions,
+    ) async {
+      tester.view.physicalSize = const Size(400, 2000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: _testTheme(),
+          home: SetupScreen(
+            databaseHelper: _EmptyDatabaseHelper(),
+            recordingService:
+                RecordingService(backend: _SilentRecorderBackend()),
+            audioPlayerService:
+                AudioPlayerService(backend: _SilentPlaybackBackend()),
+            questionSource: _FakeQuestionSource(bankQuestions: questions),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+    }
+
+    testWidgets('the loop is handed exactly what the query returned, in the '
+        'order it returned them', (tester) async {
+      const bank = <String>['First seeded prompt.', 'Second seeded prompt.'];
+      await pumpWithBank(tester, bank);
+
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('setup-start')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      // D-34: a resolved value crosses into the session, never a source.
+      expect(
+        tester.widget<PracticeScreen>(find.byType(PracticeScreen)).questions,
+        bank,
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+
+    testWidgets('a zero-result topic-by-level combination does NOT open a '
+        'session (D-41)', (tester) async {
+      // `Travel` at C1 is deliberately empty in the seeded bank. Navigating with
+      // an empty bank would crash the loop on its first prompt, because
+      // `questionAt` divides by `length`. Plan 02 adds the message that explains
+      // it; this plan's job is that the tap cannot take the user anywhere.
+      await pumpWithBank(tester, const <String>[]);
+
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('setup-start')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(find.byType(PracticeScreen), findsNothing);
+      expect(tester.takeException(), isNull);
+      // Nothing the user chose was lost on the way (D-38's standing rule).
+      expect(startEnabled(tester), isTrue);
+    });
+  });
+
+  group('normalizeSubjects (BANK-02 rules)', () {
+    test('collapses exact duplicates to one topic', () {
+      expect(
+        normalizeSubjects(<Object?>['Travel', 'Travel', 'Travel']),
+        <String>['Travel'],
+      );
+    });
+
+    test('keeps values differing only by case or surrounding whitespace as '
+        'DISTINCT topics', () {
+      // Deliberate: the server-side `whereIn` compares exact strings, so folding
+      // these together here would hand the user a checkbox that matches nothing.
+      expect(
+        normalizeSubjects(<Object?>['Travel', 'travel', ' Travel']),
+        <String>[' Travel', 'Travel', 'travel'],
+      );
+    });
+
+    test('drops blank, whitespace-only, missing and non-String values', () {
+      expect(
+        normalizeSubjects(<Object?>['', '   ', null, 42, <String>[], 'Travel']),
+        <String>['Travel'],
+      );
+    });
+
+    test('sorts case-insensitively, and the same input always sorts the same '
+        'way', () {
+      const input = <Object?>['zebra', 'Apple', 'banana', 'Cherry'];
+      const expected = <String>['Apple', 'banana', 'Cherry', 'zebra'];
+      expect(normalizeSubjects(input), expected);
+      // Re-read stability: a second call never reshuffles the checkboxes.
+      expect(normalizeSubjects(input.reversed), expected);
+    });
+
+    test('an empty bank yields no topics at all', () {
+      expect(normalizeSubjects(const <Object?>[]), isEmpty);
     });
   });
 
@@ -502,10 +750,15 @@ void main() {
           theme: _testTheme(),
           home: MediaQuery(
             data: const MediaQueryData(textScaler: TextScaler.linear(2.0)),
-            child: SetupScreen(databaseHelper: _EmptyDatabaseHelper()),
+            child: SetupScreen(
+              databaseHelper: _EmptyDatabaseHelper(),
+              questionSource: _FakeQuestionSource(),
+            ),
           ),
         ),
       );
+      // Two frames — see `pumpSetup` for why the subjects need the second one.
+      await tester.pump();
       await tester.pump();
 
       // A RenderFlex overflow THROWS in a test — so this is the assertion.

@@ -440,6 +440,12 @@ void main() {
           databaseHelper: databaseHelper,
           recordingService: recordingService,
           audioPlayerService: FakeAudioPlayerService(calls),
+          // The bank, injected rather than reached for. `PlaceholderQuestionSource`
+          // still answers with `kSubjects` and `kQuestions` and completes
+          // synchronously, so this end-to-end path keeps asserting on the exact
+          // prompts it always did while the production source stays a Firestore
+          // handle no host test may construct.
+          questionSource: const PlaceholderQuestionSource(),
         ),
       ),
     );
@@ -601,6 +607,7 @@ void main() {
     FakeAudioPlayerService? player,
   }) {
     return PracticeState(
+      questions: kQuestions,
       recordingService: recordingService,
       audioPlayerService: player ?? FakeAudioPlayerService(calls),
       databaseHelper: helper ?? databaseHelper,
@@ -929,6 +936,7 @@ void main() {
       final service = RecordingService(backend: backend);
       return (
         state: PracticeState(
+          questions: kQuestions,
           recordingService: service,
           audioPlayerService: player ?? FakeAudioPlayerService(calls),
           databaseHelper: helper ?? databaseHelper,
@@ -1206,6 +1214,7 @@ void main() {
         PracticePhase.complete,
       };
       final state = PracticeState(
+        questions: kQuestions,
         recordingService: recordingService,
         audioPlayerService: FakeAudioPlayerService(calls),
         databaseHelper: databaseHelper,
@@ -1251,6 +1260,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: PracticeScreen(
+            questions: kQuestions,
             config: config,
             recordingService: service,
             audioPlayerService: FakeAudioPlayerService(calls),
@@ -1351,6 +1361,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: PracticeScreen(
+            questions: kQuestions,
             config: interruptedConfig,
             recordingService: RecordingService(backend: backend),
             audioPlayerService: player,
@@ -1462,6 +1473,7 @@ void main() {
       final backend = FakeRecorderBackend();
       final service = RecordingService(backend: backend);
       final state = PracticeState(
+        questions: kQuestions,
         recordingService: service,
         audioPlayerService: FakeAudioPlayerService(calls),
         databaseHelper: databaseHelper,
@@ -1522,6 +1534,7 @@ void main() {
       final backend = FakeRecorderBackend();
       final service = RecordingService(backend: backend);
       final state = PracticeState(
+        questions: kQuestions,
         recordingService: service,
         audioPlayerService: FakeAudioPlayerService(calls),
         databaseHelper: databaseHelper,
@@ -1553,6 +1566,7 @@ void main() {
       final backend = FakeRecorderBackend();
       final service = RecordingService(backend: backend);
       final state = PracticeState(
+        questions: kQuestions,
         recordingService: service,
         audioPlayerService: FakeAudioPlayerService(calls),
         databaseHelper: databaseHelper,
@@ -1614,6 +1628,7 @@ void main() {
         'answers under exactly one session row', () async {
       final helper = DatabaseHelper();
       final state = PracticeState(
+        questions: kQuestions,
         recordingService: recordingService,
         audioPlayerService: FakeAudioPlayerService(calls),
         databaseHelper: helper,
