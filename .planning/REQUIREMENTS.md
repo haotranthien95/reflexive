@@ -9,7 +9,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Setup
 
-- [ ] **SETUP-01**: User can select one or more topics via checkboxes, fetched from the Firestore question bank (topics = distinct `subject` values present)
+- [x] **SETUP-01**: User can select one or more topics via checkboxes, fetched from the Firestore question bank (topics = distinct `subject` values present)
 - [x] **SETUP-02**: User can select a CEFR level (A1, A2, B1, B2, C1, C2)
 - [x] **SETUP-03**: User can pick the number of questions for the session, from 1 to 100 (`question_count`)
 - [x] **SETUP-04**: User can set the pre-record countdown duration in seconds (`t`)
@@ -49,9 +49,9 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Question Bank
 
-- [ ] **BANK-01**: Question bank is stored in Firestore using the schema `{id, content, subject, level, created_at}`
-- [ ] **BANK-02**: App derives the selectable topic list from the distinct `subject` values present in the question bank (no separate topics collection)
-- [ ] **BANK-03**: App fetches only the questions matching the selected topics and level for a given session
+- [x] **BANK-01**: Question bank is stored in Firestore using the schema `{id, content, subject, level, created_at}`
+- [x] **BANK-02**: App derives the selectable topic list from the distinct `subject` values present in the question bank (no separate topics collection)
+- [x] **BANK-03**: App fetches only the questions matching the selected topics and level for a given session
 
 ### JSON Import
 
@@ -100,7 +100,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SETUP-01 | Phase 3 | Pending |
+| SETUP-01 | Phase 3 | Complete (device UAT pending) |
 | SETUP-02 | Phase 2 | Complete |
 | SETUP-03 | Phase 2 | Complete |
 | SETUP-04 | Phase 2 | Complete |
@@ -125,9 +125,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HIST-04 | Phase 1 | Complete (device UAT pending) |
 | PERSIST-01 | Phase 1 | Complete |
 | PERSIST-02 | Phase 1 | Complete (device UAT pending) |
-| BANK-01 | Phase 3 | Pending |
-| BANK-02 | Phase 3 | Pending |
-| BANK-03 | Phase 3 | Pending |
+| BANK-01 | Phase 3 | Complete |
+| BANK-02 | Phase 3 | Complete |
+| BANK-03 | Phase 3 | Complete (device UAT pending) |
 | IMPORT-01 | Phase 4 | Pending |
 | IMPORT-02 | Phase 4 | Pending |
 | IMPORT-03 | Phase 4 | Pending |
@@ -145,4 +145,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-08-07*
-*Last updated: 2026-08-08 — Phase 1 statuses reconciled after gap closure (plans 01-04 through 01-06). `Complete` means proven by automated tests; `Complete (device UAT pending)` means the implementation is done but the remaining evidence is an on-device check that has not been performed.*
+*Last updated: 2026-08-09 — Phase 3 statuses recorded (SETUP-01, BANK-01..03). `Complete` means proven by automated tests; `Complete (device UAT pending)` means the implementation is done but the remaining evidence is an on-device check that has not been performed. SETUP-01 and BANK-03 carry that qualifier because the Firestore adapter is deliberately not host-testable (D-47) — the topic checkboxes rendering real seeded subjects, and the filtered session query returning them, are proven on a device rather than in `flutter test`. BANK-01 and BANK-02 are unqualified: the schema is asserted against the live project by `node tool/seed_questions.mjs --verify`, and the topic-derivation rule is a pure function under direct unit test.*

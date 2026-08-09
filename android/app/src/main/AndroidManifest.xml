@@ -5,17 +5,27 @@
          device.
 
          RECORD_AUDIO is still the ONLY permission declared in this file. From
-         Phase 3 the merged release manifest also carries INTERNET, contributed
-         TRANSITIVELY by cloud_firestore so the app can read the Firestore
-         question bank (D-39) — it is deliberately not declared here, because
-         declaring it would hide which dependency actually asks for it.
+         Phase 3 the merged release manifest also carries INTERNET *and*
+         ACCESS_NETWORK_STATE — BOTH contributed transitively by
+         firebase-firestore, so the app can read the Firestore question bank and
+         so the SDK can observe connectivity and decide when to fall back to its
+         on-device cache (D-39). Neither is declared here, deliberately:
+         declaring them would hide which dependency actually asks for them.
 
          That claim is verified against the MERGED RELEASE manifest
-         (build/app/intermediates/merged_manifest/release/.../AndroidManifest.xml),
+         (build/app/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml),
          not against this source file: a source file cannot tell you what a
-         dependency added. Re-run that inspection whenever a dependency changes,
-         and confirm INTERNET is the only thing Firebase brought — no analytics,
-         no ads, no surprise transitive permission. -->
+         dependency added. Phase 3 Plan 3 ran that inspection and read the
+         merger's blame report — the complete set is RECORD_AUDIO (this file),
+         INTERNET + ACCESS_NETWORK_STATE (firebase-firestore:26.5.0), and one
+         app-scoped signature-level receiver permission from androidx.core:core,
+         which the Flutter embedding pulls in and Firebase does not. No
+         analytics, advertising-ID, location or account permission.
+
+         Re-run that inspection whenever a dependency changes, and grep the
+         merged output for `<uses-permission` rather than for `android.permission.*`
+         — the latter cannot match an app-namespaced permission, which is how the
+         androidx.core entry went unnoticed until Phase 3. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application
         android:label="englishreflex"

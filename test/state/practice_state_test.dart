@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:englishreflex/data/questions.dart';
 import 'package:englishreflex/db/database_helper.dart';
 import 'package:englishreflex/models/session_config.dart';
 import 'package:englishreflex/services/audio_player_service.dart';
@@ -11,6 +10,8 @@ import 'package:englishreflex/utils/audio_paths.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../fixtures/questions.dart';
 
 /// Records start/stop calls without touching any platform channel. The real
 /// [RecordingService] creates its backend lazily, so overriding these methods
@@ -160,7 +161,7 @@ void main() {
     recordingService = FakeRecordingService(calls);
     audioPlayerService = FakeAudioPlayerService(calls, databaseHelper);
     state = PracticeState(
-      questions: kQuestions,
+      questions: kFixtureQuestions,
       recordingService: recordingService,
       audioPlayerService: audioPlayerService,
       databaseHelper: databaseHelper,
@@ -314,7 +315,7 @@ void main() {
     //
     // Its own PracticeState so the shared one is still disposable in tearDown.
     final racingState = PracticeState(
-      questions: kQuestions,
+      questions: kFixtureQuestions,
       recordingService: recordingService,
       audioPlayerService: audioPlayerService,
       databaseHelper: databaseHelper,
@@ -414,7 +415,7 @@ void main() {
         'recording', () async {
       final failingHelper = FailingDatabaseHelper();
       final failingState = PracticeState(
-        questions: kQuestions,
+        questions: kFixtureQuestions,
         recordingService: recordingService,
         audioPlayerService: audioPlayerService,
         databaseHelper: failingHelper,
