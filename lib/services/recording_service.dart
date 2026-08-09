@@ -37,6 +37,34 @@ abstract class RecorderBackend {
 
   Future<void> start(String absoluteFilePath);
 
+  /// Suspends capture. Deliberately returns nothing meaningful: on BOTH
+  /// platforms this is a guarded early return that does nothing at all in the
+  /// wrong state and still returns normally. Ask [isPaused] afterwards — never
+  /// infer success from the absence of a throw.
+  Future<void> pause();
+
+  /// Continues capture into the SAME file. The paused span is excised from the
+  /// recording rather than encoded as silence.
+  Future<void> resume();
+
+  /// The recorder's ACTUAL paused state, read back from the platform. This is
+  /// the confirmation [RecordingService.pause] believes instead of the pause
+  /// call's own return.
+  Future<bool> isPaused();
+
+  /// True/false as the recorder enters and leaves its paused state — including
+  /// transitions the app never requested.
+  ///
+  /// This stream is the ONLY way Dart learns that the OS paused the microphone
+  /// on its own: an answered call on iOS, audio-focus loss on Android. Nothing
+  /// else in this class reports that, because nothing else is invoked. Plan
+  /// 02-05's interruption handling subscribes to exactly this.
+  ///
+  /// Kept as a `bool` stream rather than the plugin's own state enum so this
+  /// seam stays free of package types and every test can drive it with a plain
+  /// `StreamController<bool>`.
+  Stream<bool> get onPausedChanged;
+
   /// Finalizes the current recording and returns its absolute path.
   Future<String?> stop();
 
@@ -55,6 +83,26 @@ class _RecordPackageBackend implements RecorderBackend {
   @override
   Future<void> start(String absoluteFilePath) =>
       _recorder.start(const RecordConfig(), path: absoluteFilePath);
+
+  @override
+  Future<void> pause() => _recorder.pause();
+
+  @override
+  Future<void> resume() => _recorder.resume();
+
+  @override
+  Future<bool> isPaused() => _recorder.isPaused();
+
+  /// Maps the plugin's three-valued recorder state onto the seam's `bool`.
+  ///
+  /// `stop` is filtered out rather than mapped to false: a stopped recorder is
+  /// not an un-paused one, and emitting false for it would tell a subscriber the
+  /// microphone came back when it actually went away.
+  @override
+  Stream<bool> get onPausedChanged => _recorder
+      .onStateChanged()
+      .where((state) => state != RecordState.stop)
+      .map((state) => state == RecordState.pause);
 
   @override
   Future<String?> stop() => _recorder.stop();
@@ -208,6 +256,7 @@ class RecordingService {
     }
 
     _recording = true;
+    _paused = false;
     _deadline?.cancel();
     _deadline = PausableCountdown(
       seconds: (maxDuration ?? kMaxRecordingDuration).inSeconds,
@@ -224,6 +273,62 @@ class RecordingService {
     )..start();
   }
 
+  /// True only while the microphone is CONFIRMED paused — set from
+  /// [_backend.isPaused], never from a pause call returning without throwing.
+  bool _paused = false;
+
+  /// Whether the microphone is currently paused, as this service last confirmed.
+  bool get isPaused => _paused;
+
+  /// Re-published so the loop can learn about a pause it never requested.
+  ///
+  /// See [RecorderBackend.onPausedChanged] for why this stream exists at all:
+  /// an OS-initiated pause (an answered call, audio-focus loss) reaches Dart
+  /// through nothing else.
+  Stream<bool> get onPausedChanged => _backend.onPausedChanged;
+
+  /// Pauses the microphone, and reports whether it ACTUALLY paused.
+  ///
+  /// **The return value is the whole point of this method.** `record`'s pause is
+  /// a guarded early return on both platforms — iOS guards on the recorder being
+  /// in the record state, Android on `isRecording()` — so a call that lands in
+  /// the wrong state returns normally having done nothing at all. A caller that
+  /// inferred "the microphone is paused" from "the call did not throw" would
+  /// publish a banner reading *"Paused — nothing is being recorded"* over a live
+  /// microphone. So the backend is asked afterwards, and only its answer is
+  /// believed.
+  ///
+  /// **The deadline freezes in lock-step or not at all.** A pause EXCISES the
+  /// paused span from the audio file rather than encoding silence into it, so a
+  /// `d` deadline that kept running through a 30-second pause would auto-stop 30
+  /// seconds of speech early — cutting the answer short by exactly the time the
+  /// user was away. Freezing the deadline only on a CONFIRMED pause is what
+  /// keeps the deadline and the microphone describing the same recording.
+  Future<bool> pause() async {
+    if (!_recording || _paused) return false;
+    await _backend.pause();
+    if (!await _backend.isPaused()) return false;
+    _paused = true;
+    _deadline?.pause();
+    return true;
+  }
+
+  /// Resumes the microphone, and reports whether it ACTUALLY resumed.
+  ///
+  /// The exact mirror of [pause], and believed on the same terms: `resume` is
+  /// the same kind of guarded early return, so the un-freezing of the deadline
+  /// waits on the backend confirming the recorder is no longer paused. The
+  /// deadline continues from the second it stopped on — [PausableCountdown]
+  /// never restarts the current second.
+  Future<bool> resume() async {
+    if (!_recording || !_paused) return false;
+    await _backend.resume();
+    if (await _backend.isPaused()) return false;
+    _paused = false;
+    _deadline?.resume();
+    return true;
+  }
+
   /// Stops the current recording and returns the finalized absolute file path.
   ///
   /// Returns `null` when the recorder is still arming (the signal is recorded,
@@ -236,6 +341,7 @@ class RecordingService {
     }
     if (!_recording) return null;
     _recording = false;
+    _paused = false;
     _deadline?.cancel();
     _deadline = null;
     return _backend.stop();
@@ -256,6 +362,7 @@ class RecordingService {
     _deadline?.cancel();
     _deadline = null;
     _recording = false;
+    _paused = false;
     await _backend.dispose();
   }
 }
