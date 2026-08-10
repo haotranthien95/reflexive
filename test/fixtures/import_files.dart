@@ -64,3 +64,123 @@ const String kFixtureRetiredMalformedRows = '''
   {"content": "A perfectly good question.", "subject": "Travel", "level": "A1"}
 ]}
 ''';
+
+// ── File-shape fixtures (D-62) ───────────────────────────────────────────────
+// Each of the four below is a DIFFERENT way of not being a question file, and
+// all four must land on the one file-shape signal. The empty one is separate on
+// purpose: a file being empty and a file being wrong are two different facts.
+
+/// Not JSON at all — the shape of a text file picked by mistake.
+const String kFixtureNotJson = 'this is not JSON, it is a sentence';
+
+/// Valid JSON whose top-level value is a LIST, not an object — the shape of a
+/// file someone wrote as a bare array of questions.
+const String kFixtureTopLevelList =
+    '[{"content": "A question.", "subject": "Travel", "level": "A1"}]';
+
+/// A valid JSON object with no `data` key — the shape of a file that used a
+/// different name for the array.
+const String kFixtureNoDataKey =
+    '{"questions": [{"content": "A question.", "subject": "Travel", "level": "A1"}]}';
+
+/// `data` present but not a list.
+const String kFixtureDataNotAList = '{"data": "a string, not a list"}';
+
+/// `data` present, well formed and EMPTY — the file-empty signal, not the
+/// file-shape one.
+const String kFixtureEmptyData = '{"data": []}';
+
+// ── Normalization fixtures (D-53) ────────────────────────────────────────────
+
+/// Two rows whose `content` and `subject` differ ONLY by surrounding
+/// whitespace. Normalizing on write is what stops them becoming two questions
+/// and two topic checkboxes.
+const String kFixturePaddedTwins = '''
+{"data": [
+  {"content": "Where would you go?", "subject": "Travel", "level": "B1"},
+  {"content": "  Where would you go?  ", "subject": " Travel\\t", "level": "B1"}
+]}
+''';
+
+/// Levels in every casing an AI-generated file realistically emits. All three
+/// are unambiguous and are accepted after upper-casing.
+const String kFixtureMixedCaseLevels = '''
+{"data": [
+  {"content": "Question one.", "subject": "Travel", "level": "b1"},
+  {"content": "Question two.", "subject": "Travel", "level": "c2"},
+  {"content": "Question three.", "subject": "Travel", "level": " a2 "}
+]}
+''';
+
+// ── Rejection fixtures (D-55) ────────────────────────────────────────────────
+
+/// Row 1 is a bare string rather than an object; row 2 is a number. Neither is
+/// shaped like a question. Row 3 is valid, so the 1-based numbering of the two
+/// skips is genuinely being counted rather than guessed.
+const String kFixtureRowsNotObjects = '''
+{"data": [
+  "just a string",
+  42,
+  {"content": "A perfectly good question.", "subject": "Travel", "level": "A1"}
+]}
+''';
+
+/// Row 1's `content` is a number rather than text — a shape `sanitizedText`
+/// rejects and one an AI emitting a bare year could produce.
+const String kFixtureNonStringContent = '''
+{"data": [
+  {"content": 1999, "subject": "Travel", "level": "A1"}
+]}
+''';
+
+/// Row 1 has no `subject`; row 2's is whitespace only. Both are unusable as a
+/// topic, and a question with no topic is unpickable on Setup.
+const String kFixtureBlankSubjects = '''
+{"data": [
+  {"content": "A question.", "level": "A1"},
+  {"content": "Another question.", "subject": "   ", "level": "A1"}
+]}
+''';
+
+/// `B7` is not a CEFR level. The raw text is quoted back to the user, so the
+/// skip has to carry it.
+const String kFixtureBadLevel = '''
+{"data": [
+  {"content": "Describe a time you had to change plans.", "subject": "Travel", "level": "B7"}
+]}
+''';
+
+/// Row 1 is wrong in TWO ways — blank content AND a bad level. The check order
+/// is content, then subject, then level, so the reported reason is
+/// deterministic rather than whichever check happened to run first.
+const String kFixtureBlankContentAndBadLevel = '''
+{"data": [
+  {"content": "  ", "subject": "Travel", "level": "Z9"}
+]}
+''';
+
+// ── Dedupe fixtures (D-54) ───────────────────────────────────────────────────
+
+/// The same question three times, spelled two ways: rows 1 and 3 are identical
+/// and row 2 differs only by padding, so after normalization all three are one
+/// question. The FIRST is kept and the two later ones are counted as
+/// duplicates — never skipped, never an error.
+const String kFixtureRepeatedWithinFile = '''
+{"data": [
+  {"content": "What did you do this morning?", "subject": "Daily life", "level": "A2"},
+  {"content": " What did you do this morning? ", "subject": "Daily life", "level": "A2"},
+  {"content": "What did you do this morning?", "subject": "Daily life", "level": "A2"}
+]}
+''';
+
+/// Four valid rows in a deliberate order, used to prove the surviving rows keep
+/// FILE order after the middle one is deduped away. **Ordering is load-bearing
+/// here** — D-63 turns it into bank order.
+const String kFixtureFourOrderedRows = '''
+{"data": [
+  {"content": "First.", "subject": "Travel", "level": "A1"},
+  {"content": "Second.", "subject": "Travel", "level": "A1"},
+  {"content": "Third.", "subject": "Travel", "level": "A1"},
+  {"content": "Fourth.", "subject": "Travel", "level": "A1"}
+]}
+''';
