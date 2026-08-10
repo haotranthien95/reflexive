@@ -7,9 +7,12 @@ import '../db/database_helper.dart';
 import '../models/session_config.dart';
 import '../services/audio_player_service.dart';
 import '../services/firestore_question_source.dart';
+import '../services/json_file_picker.dart';
+import '../services/question_bank_writer.dart';
 import '../services/recording_service.dart';
 import '../utils/audio_paths.dart';
 import 'history_screen.dart';
+import 'import_sheet.dart';
 import 'practice_screen.dart';
 
 /// The D-16/D-17 session defaults. Every visit to Setup starts here, because
@@ -20,10 +23,10 @@ const int kDefaultThinkingSeconds = 5;
 const int kDefaultAnswerSeconds = 60;
 const bool kDefaultAutoReplay = true;
 
-/// The six CEFR levels (SETUP-02 / D-17) — a fixed, closed, single-select set.
-/// The row can never be empty and exactly one entry is always selected, so
-/// there is no "nothing chosen" state to design for.
-const List<String> kLevels = <String>['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+// The six CEFR levels now live in `lib/services/firestore_question_source.dart`
+// beside the other facts a screen and a service must agree on (D-53). The name
+// is unchanged and resolves through the services import above; see that file for
+// why the constant moved rather than being imported from here.
 
 /// The single user-facing message for a topics read that could not be SERVED,
 /// as opposed to a bank that is genuinely empty (D-37).
@@ -130,6 +133,8 @@ class SetupScreen extends StatefulWidget {
     this.recordingService,
     this.audioPlayerService,
     this.questionSource,
+    this.jsonFilePicker,
+    this.questionBankWriter,
   });
 
   final DatabaseHelper? databaseHelper;
@@ -146,6 +151,18 @@ class SetupScreen extends StatefulWidget {
   ///
   /// Null in production, where [FirestoreQuestionSource] is constructed lazily.
   final QuestionSource? questionSource;
+
+  /// The import's two platform seams (IMPORT-01), injectable for the same
+  /// reason [questionSource] is (D-47).
+  ///
+  /// They are held here and passed STRAIGHT THROUGH to [ImportSheet] rather
+  /// than resolved on this screen: Setup never constructs either real
+  /// implementation, so opening the sheet in a widget test touches no file
+  /// picker channel and no Firestore handle. Null in production, where
+  /// [FilePickerJsonFilePicker] and [FirestoreQuestionBankWriter] are built
+  /// lazily inside the sheet.
+  final JsonFilePicker? jsonFilePicker;
+  final QuestionBankWriter? questionBankWriter;
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
@@ -291,8 +308,15 @@ class _SetupScreenState extends State<SetupScreen> {
   /// Driven from the `Navigator.push` awaits already in this file rather than
   /// from a route observer: History and Start are the only two ways off this
   /// screen, so one `await` per push covers every return path with no new
-  /// machinery. Phase 4's importer lands the user back here too, and will need
-  /// no extra wiring to make its new topics appear.
+  /// machinery.
+  ///
+  /// **Phase 4's importer needed its own call site after all (D-51).** The
+  /// prediction that used to sit here — that the importer would land the user
+  /// back on Setup and need no extra wiring — holds for a pushed route and is
+  /// FALSE for a modal bottom sheet, which pops no route. D-48 chose a sheet
+  /// precisely so UI-03's screen count stayed three, and the cost of that choice
+  /// is this: without the explicit `await` in [_openImportSheet], an import's new
+  /// topics would not appear until the user left Setup and came back.
   ///
   /// Background — silent — UNLESS the card is currently showing could-not-load,
   /// where there is no good data to preserve and a spinner is an improvement on
@@ -328,6 +352,47 @@ class _SetupScreenState extends State<SetupScreen> {
       ),
     );
     if (!mounted) return;
+    await _refreshSubjectsOnReappear();
+  }
+
+  /// Opens the importer (D-48). Shaped exactly like [_openHistory], with
+  /// `showModalBottomSheet` where the push would be.
+  ///
+  /// **The re-read hangs off the sheet's own `await`, never off the Done
+  /// button's handler.** That one line covers every way the sheet can close —
+  /// Done, drag-down, barrier tap and system back — so there is exactly one
+  /// refresh call site and no exit path that silently skips it (D-51). Wiring it
+  /// to the button would have left three exits unrefreshed.
+  ///
+  /// [_clearStartMessage] runs too: a "No B1 questions in Travel yet." line is
+  /// very likely to have just been made false by the import that closed, and
+  /// leaving it on screen would be the app contradicting itself.
+  Future<void> _openImportSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      // The result state's skip list is unbounded (plan 02), so the sheet sizes
+      // to its content and scrolls rather than being height-locked.
+      isScrollControlled: true,
+      showDragHandle: true,
+      useSafeArea: true,
+      // Ivory: a modal sheet is CHROME, and peach marks content — the two cards
+      // inside it are the content.
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)), // lg
+      ),
+      // Capped so the scrim and the drag handle stay visible and the sheet never
+      // reads as a full screen — which would undo the point of D-48.
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.9,
+      ),
+      builder: (_) => ImportSheet(
+        picker: widget.jsonFilePicker,
+        writer: widget.questionBankWriter,
+      ),
+    );
+    if (!mounted) return;
+    setState(_clearStartMessage);
     await _refreshSubjectsOnReappear();
   }
 
@@ -469,8 +534,34 @@ class _SetupScreenState extends State<SetupScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('EnglishReflex', style: theme.textTheme.headlineSmall),
+        title: Text(
+          'EnglishReflex',
+          style: theme.textTheme.headlineSmall,
+          // The title now competes with TWO actions instead of one, so it
+          // ellipsises rather than overflowing at the largest OS text scale —
+          // the same treatment the practice AppBar already carries.
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        // A fixed two-entry literal, never data-driven: neither action is
+        // conditional on the bank, the network or the import state, so this list
+        // can never render empty. Import is PREPENDED — `actions:` renders
+        // left→right ending at the right edge, so putting it first leaves the
+        // History icon exactly where the user's thumb already expects it. Adding
+        // an action must not move an existing one.
         actions: [
+          IconButton(
+            key: const Key('setup-import'),
+            icon: const Icon(Icons.upload_file),
+            // Icon-only, so the tooltip IS the accessible name — exactly as the
+            // History action's is. Never disabled: every failure the import can
+            // hit lives inside the sheet, where it has room to be explained, and
+            // a disabled icon with no explanation is what this app's conventions
+            // forbid. No local colour override — `appBarTheme.actionsIconTheme`
+            // already paints AppBar actions coral.
+            tooltip: 'Import questions',
+            onPressed: () => unawaited(_openImportSheet()),
+          ),
           IconButton(
             icon: const Icon(Icons.history),
             tooltip: 'Exercise History',

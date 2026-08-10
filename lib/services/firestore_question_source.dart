@@ -22,6 +22,27 @@ const String kQuestionsCollection = 'questions';
 /// refactor.
 const String kCreatedAtField = 'created_at';
 
+/// The six CEFR levels (SETUP-02 / D-17) — a fixed, closed, single-select set.
+/// The row can never be empty and exactly one entry is always selected, so
+/// there is no "nothing chosen" state to design for.
+///
+/// **Relocated here from `lib/screens/setup_screen.dart` in Phase 4 (D-53).**
+/// The importer validates a row's `level` against exactly this closed set, so
+/// the constant now has two consumers instead of one: Setup's level-chip row and
+/// `question_importer.dart`. Importing it from the screen instead was considered
+/// and rejected — it would point a file under `lib/services/` at a Flutter widget
+/// file and close a ring (Setup imports the sheet, the sheet imports the
+/// importer, the importer imports Setup), and it would make the deliberately
+/// widget-free importer depend on `package:flutter/material.dart` transitively
+/// for a six-element list of strings. This file is where the project already
+/// keeps the facts a screen and a service have to agree on, beside
+/// [kQuestionsCollection], [kCreatedAtField] and [sanitizedText].
+///
+/// Both call sites already import this file, so the move added no import line
+/// anywhere — which is the check that proved this was the right destination
+/// rather than a third one.
+const List<String> kLevels = <String>['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+
 /// Thrown when the question bank could not be READ, as opposed to being empty.
 ///
 /// That distinction is this phase's sharpest correctness detail and the reason
