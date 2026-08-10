@@ -184,3 +184,94 @@ const String kFixtureFourOrderedRows = '''
   {"content": "Fourth.", "subject": "Travel", "level": "A1"}
 ]}
 ''';
+
+// ── Whole-report fixtures (IMPORT-04) ────────────────────────────────────────
+// The rows above each exercise ONE rule. The ones below exercise the report:
+// every row of the file has to be accounted for in one of the three categories,
+// and the three have to be tellable apart on screen.
+
+/// All three outcomes in ONE file, so a single import produces a summary card
+/// with all three lines and a skip list with all three reasons.
+///
+/// Row 1 and row 4 are new; row 2 is [kFixtureMixedOutcomeBankKey], already in
+/// the bank; rows 3, 5 and 6 are skipped for three DIFFERENT reasons at three
+/// non-adjacent positions — which is what makes the 1-based numbering in the
+/// skip list genuinely counted rather than an index that happens to line up.
+///
+/// Expected report: 2 added, 1 duplicate, 3 skipped at rows 3, 5 and 6.
+const String kFixtureMixedOutcome = '''
+{"data": [
+  {"content": "First new question.", "subject": "Travel", "level": "A1"},
+  {"content": "Already there.", "subject": "Travel", "level": "B1"},
+  {"content": "Describe a time you had to change plans.", "subject": "Travel", "level": "B7"},
+  {"content": "Second new question.", "subject": "Opinions", "level": "C1"},
+  {"subject": "Daily life", "level": "A2"},
+  "just a string"
+]}
+''';
+
+/// The three normalized field values of [kFixtureMixedOutcome]'s row 2.
+///
+/// Spelled out here rather than in the test body so the fixture and the bank
+/// state it is deduped against cannot drift apart: a test builds the bank's key
+/// set from these through `importDedupeKey`, which is the same function the
+/// import itself uses.
+const List<String> kFixtureMixedOutcomeBankKey = <String>[
+  'Already there.',
+  'Travel',
+  'B1',
+];
+
+/// A `level` value 240 characters long — twenty times the 12-character echo cap.
+///
+/// **The layout-integrity case, not a validation case.** The row is skipped for
+/// its level either way; what this fixture exercises is the render site, which
+/// must truncate the quoted value before it reaches a widget. The repeating
+/// 12-character block is deliberate: the first block is exactly the cap, so an
+/// assertion can name the expected prefix without counting characters.
+final String kFixturePathologicalLevel = '''
+{"data": [
+  {"content": "A perfectly good question.", "subject": "Travel", "level": "${'ABCDEFGHIJKL' * 20}"}
+]}
+''';
+
+/// Question text carrying a newline, a carriage return and a tab.
+///
+/// The row is skipped for its level, so its content is echoed back in the skip
+/// row's sub-line — which is the surface that must collapse all three to single
+/// spaces. A raw newline reaching that widget would break the one-line row the
+/// whole skip list is laid out around.
+const String kFixtureNewlinesInQuestion = '''
+{"data": [
+  {"content": "Line one.\\nLine two.\\r\\nLine three.\\tTabbed.", "subject": "Travel", "level": "B7"}
+]}
+''';
+
+/// The text [kFixtureNewlinesInQuestion]'s one skip row must render.
+///
+/// Written out rather than derived, for the same reason
+/// [kFixtureThreeRowExpected] is: an expectation that computes itself from the
+/// input moves whenever the input does and catches nothing.
+const String kFixtureNewlinesCollapsed =
+    'Line one. Line two. Line three. Tabbed.';
+
+/// [rowCount] valid, mutually distinct rows — the only way to cross a batch
+/// boundary on the host.
+///
+/// **A builder, not a constant, and deliberately so.** The case it exists for is
+/// "more rows than fit in one `writeBatch`", which is 501 of them; pasting 501
+/// literal rows into this file would bury every other fixture in it and would
+/// hard-code a cap that lives in `question_bank_writer.dart`. The caller passes
+/// the count so the test reads `kMaxWritesPerBatch + 1` and the relationship
+/// between the fixture and the cap is stated where it matters.
+///
+/// Each row's content carries its own index, so no two rows can dedupe against
+/// each other and the count that reaches the writer is the count the file had.
+String kFixtureRowsBeyondBatchCap(int rowCount) {
+  final rows = <String>[
+    for (var i = 1; i <= rowCount; i++)
+      '  {"content": "Generated question $i.", "subject": "Travel", '
+          '"level": "A1"}',
+  ];
+  return '{"data": [\n${rows.join(',\n')}\n]}';
+}
