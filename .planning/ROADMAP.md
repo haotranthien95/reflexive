@@ -127,7 +127,7 @@ Plans:
   3. On first run, the question bank already contains ~10 general-purpose seeded topics so Setup is never empty.
   4. The app has exactly 3 core screens (Setup, Practice Session, History) with no extraneous navigation.
 
-**Plans**: 1/5 plans executed
+**Plans**: 3/5 plans executed
 Plans:
 
 **Wave 1**
@@ -136,8 +136,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 04-02-PLAN.md — Every row and every failure gets its own surface (skip list, duplicates, the four terminal states, blocked mid-write dismissal)
-- [ ] 04-03-PLAN.md — UI-03 navigation contract (`docs/NAVIGATION.md`) and the >30-topics message with its own exception type
+- [x] 04-02-PLAN.md — Every row and every failure gets its own surface (skip list, duplicates, the four terminal states, blocked mid-write dismissal)
+- [x] 04-03-PLAN.md — UI-03 navigation contract (`docs/NAVIGATION.md`) and the >30-topics message with its own exception type
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -159,4 +159,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Record, Save & Replay a Single Answer (Crash-Safe) | 6/6 | Complete    | 2026-08-08 |
 | 2. Full Timed Practice Session (Setup, Loop & Controls) | 5/5 | Complete    | 2026-08-09 |
 | 3. Real Question Bank via Firestore | 3/3 | Complete    | 2026-08-09 |
-| 4. Bulk Import, Seed Content & Screen Polish | 1/5 | In Progress|  |
+| 4. Bulk Import, Seed Content & Screen Polish | 3/5 | In Progress|  |
