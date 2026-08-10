@@ -16,8 +16,10 @@ authored here, in the repo, in the app's own import format, and it is loaded int
   not make a brand-new install work offline. The bank lives in Firestore, so a device that
   has never been online still needs one successful Setup visit before it can drill (D-56).
 - **Not a second write path.** There is exactly one way questions get into the bank: the
-  in-app importer. That is why `tool/seed_questions.mjs` was deleted in this phase rather
-  than kept as a convenience.
+  in-app importer. That is why the one-off Node seed script that used to live under `tool/`
+  was deleted in this phase rather than kept as a convenience — it did not normalize, did
+  not dedupe and did not reject a bad level, so keeping it would have meant two writers into
+  one collection obeying two different sets of rules.
 
 ## Why it stays in the repo after the import
 
@@ -96,8 +98,8 @@ script and no console step:
 
 1. Copy `seed/seed-questions.json` onto the device (any location the OS file picker can
    reach: Downloads, Files, Drive).
-2. Open the app, and on the Setup screen tap the **import** action in the app bar.
-3. Tap **Choose JSON file** and pick the copied file.
+2. Open the app, and on the Setup screen tap the **Import questions** action in the app bar.
+3. Tap **Choose a JSON file** and pick the copied file.
 4. Wait for the write to finish. The sheet cannot be dismissed while it is writing — 600
    rows exceed one Firestore write batch (500), so the import commits in two chunks and the
    progress bar advances once per completed chunk.
