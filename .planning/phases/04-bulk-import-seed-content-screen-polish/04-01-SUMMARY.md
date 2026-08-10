@@ -273,6 +273,12 @@ None for this plan. The Firestore rules and composite index are unchanged, and n
 
 **One thing plan 04-03 should know:** `kLevels` is now imported from `lib/services/firestore_question_source.dart`. Anything that adds a level-aware surface reads it from there.
 
+## Self-Check: PASSED
+
+All 7 claimed files exist on disk and all 3 claimed commits resolve in `git log`.
+`flutter analyze --no-fatal-infos` exits 0 and the full `flutter test` suite is
+green at 235 tests (211 before this plan's own 24 unit tests were added).
+
 ---
 *Phase: 04-bulk-import-seed-content-screen-polish*
 *Completed: 2026-08-10*
