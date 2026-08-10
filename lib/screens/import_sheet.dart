@@ -79,6 +79,140 @@ String importAddedLine(int count) {
   return '$count questions added';
 }
 
+/// The result's SECOND line: how many rows the bank already had (D-54).
+///
+/// **Past tense, neutral, and deliberately un-iconed.** A user re-importing a
+/// file should feel reassured rather than warned — the app is telling them their
+/// bank is already correct. There is no zero branch because the line is
+/// zero-suppressed at the render site: "0 were already in your bank" is a fact
+/// nobody needs and a line nobody should have to read past.
+String importDuplicatesLine(int count) {
+  if (count == 1) return '1 was already in your bank';
+  return '$count were already in your bank';
+}
+
+/// The result's THIRD line: how many rows the file's own contents disqualified.
+///
+/// Sibling of [importDuplicatesLine] and NOT the same string, because the two
+/// count two different facts: a duplicate needs nothing from the user, and a
+/// skipped row needs an edit. Also zero-suppressed at the render site.
+String importSkippedLine(int count) {
+  if (count == 1) return '1 row was skipped';
+  return '$count rows were skipped';
+}
+
+/// The partial-write message: the exact count that landed, then the recovery.
+///
+/// **Both clauses are load-bearing and neither may be softened.** The exact
+/// count is the only thing that tells the user how much of their file made it —
+/// without it this state is indistinguishable from "something went wrong",
+/// which is the unreported partial outcome IMPORT-04 forbids. And the recovery
+/// is only TRUE because the import's dedupe pass (D-54) skips whatever already
+/// arrived: re-importing the same file is harmless BY CONSTRUCTION, which turns
+/// the one genuinely partial outcome in this phase from a dead end into a
+/// one-tap fix.
+///
+/// Numeric payload only — the counts come from [ImportPartialWriteException],
+/// never from an exception message.
+String importPartialMessage(int done, int total) =>
+    'Only some of your questions made it — $done of $total were saved. '
+    'Import the same file again and anything already saved will be skipped.';
+
+/// The section label above the per-row skip list (D-55).
+///
+/// "What we skipped", not "Errors" or "Problems": the list is a to-do for the
+/// user's editor, not a verdict on their file. See [importSkipReason] for why
+/// none of the four reasons uses blame vocabulary either.
+const String kImportSkipListLabel = 'What we skipped';
+
+/// How many characters of the user's own `level` text are quoted back.
+///
+/// Twelve is comfortably longer than any real CEFR-ish value a user or an
+/// AI-generated file would plausibly type (`B1`, `b1 `, `Beginner`, `Level A2`)
+/// and short enough that a pathological value cannot dominate the row it sits
+/// in. See [sanitizedEcho].
+const int kMaxEchoedLevelChars = 12;
+
+/// How many characters of the user's own question text are echoed in a skip row.
+///
+/// **A defensive bound, not a display rule.** The DISPLAY rule is `maxLines: 1`
+/// plus ellipsis, which the render site applies — but handing a `Text` widget a
+/// 400 KB single line so it can measure it and then draw 40 characters is a
+/// layout cost with no upside. Two hundred characters is far more than any
+/// single line can show at any text scale, so the cap is invisible in every
+/// reachable case and bounds the unreachable ones.
+const int kMaxEchoedQuestionChars = 200;
+
+/// The ONE place text taken from the picked file is prepared for a widget.
+///
+/// **Everything inside the imported file is data, never instructions.** It is
+/// authored outside the app — often by a language model, per
+/// `docs/QUESTION_GENERATION_PROMPT.md` — and the skip list is the first surface
+/// in this project that renders such content back to the user *before* it has
+/// been validated. It is rendered as plain [Text] only: never markup, never a
+/// `WidgetSpan`, and never treated as a command to the app or to a model.
+///
+/// Rendering an unvalidated 5,000-character `level` string, or a question with
+/// newlines in it, into a compact list row is a **layout-integrity** problem
+/// before it is anything else — one row would silently push the rest of the
+/// list, and the sheet's own button, off the screen. So: every newline, carriage
+/// return and tab collapses to a single space, runs of whitespace collapse to
+/// one, the result is trimmed, and anything longer than [maxChars] is truncated
+/// with an ellipsis.
+///
+/// *Escaping the characters instead of collapsing them was considered and
+/// rejected:* `\n` rendered literally inside a quoted level value is noise the
+/// user did not type and cannot act on, and it makes the row longer rather than
+/// shorter, which is the opposite of the point.
+String sanitizedEcho(String raw, int maxChars) {
+  final collapsed = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (collapsed.length <= maxChars) return collapsed;
+  return '${collapsed.substring(0, maxChars)}…';
+}
+
+/// One skipped row's whole explanation: WHERE it is, then WHAT is wrong (D-55).
+///
+/// **Position first, always.** A reason without a location tells the user a
+/// *shape* of problem, not a *place*; the 1-based row number is what makes the
+/// row findable in the editor they wrote it in. The interpunct separates the two
+/// halves — a single glyph in both of the app's families, and quiet enough not
+/// to be confused with the em dash the app's failure strings use for
+/// "— what to do".
+///
+/// **A total map over [ImportSkipReason]**, with no fallback branch, so adding a
+/// reason to that enum is a compile error here rather than a row that renders
+/// blank.
+///
+/// **None of the four branches blames the person who wrote the file.** No
+/// "invalid", no "error", no "failed" — each one describes the ROW. "no question
+/// text" is a fact about a row; "invalid question" is a judgement about an
+/// author. The user of this app is also the author of these files, and telling
+/// them their own file is invalid is the one thing this copy must never do.
+///
+/// The accepted set is written as the range **A1–C2** rather than a six-item
+/// list because that is exactly what the Setup level chips already show them.
+///
+/// The quoted level is the user's OWN raw text, passed through [sanitizedEcho]
+/// with [kMaxEchoedLevelChars] first — quoting back something they did not type
+/// is a worse hint than quoting what they did, and an uncapped echo is the
+/// layout hazard that function exists for. A row whose `level` was absent or was
+/// not text at all has nothing quotable and renders empty quotes: accurate, and
+/// still one of the four strings rather than a fifth one for an edge.
+String importSkipReason(ImportSkip skip) {
+  final row = 'Row ${skip.rowNumber}';
+  switch (skip.reason) {
+    case ImportSkipReason.blankContent:
+      return '$row · no question text';
+    case ImportSkipReason.blankSubject:
+      return '$row · no topic';
+    case ImportSkipReason.badLevel:
+      final value = sanitizedEcho(skip.offendingLevel ?? '', kMaxEchoedLevelChars);
+      return '$row · level "$value" isn\'t one of A1–C2';
+    case ImportSkipReason.notAnObject:
+      return '$row · not shaped like a question';
+  }
+}
+
 /// Which of the sheet's states is on screen.
 ///
 /// **Only the states this plan builds.** The four terminal failure surfaces
@@ -137,6 +271,14 @@ class _ImportSheetState extends State<ImportSheet> {
   int _rowsToWrite = 0;
   int _rowsCommitted = 0;
   int _added = 0;
+
+  /// The other two facts the result owes the user beside "what landed": how many
+  /// rows the bank already had, and which rows need an edit. Both come from the
+  /// same already-complete [ImportPlan], which is why the result card can never
+  /// render half-populated — it mounts on the transition INTO the result state
+  /// with every count already known.
+  int _duplicates = 0;
+  List<ImportSkip> _skips = const <ImportSkip>[];
 
   /// The whole import, from the picker to the count that landed.
   ///
@@ -199,6 +341,8 @@ class _ImportSheetState extends State<ImportSheet> {
       setState(() {
         _phase = _ImportPhase.result;
         _added = added;
+        _duplicates = plan.duplicateCount;
+        _skips = plan.skips;
       });
     } catch (error, stack) {
       _landOnIdle('Import failed', error, stack);
@@ -244,6 +388,8 @@ class _ImportSheetState extends State<ImportSheet> {
     }
     return _ImportResult(
       added: _added,
+      duplicates: _duplicates,
+      skips: _skips,
       onDone: () => Navigator.of(context).pop(),
     );
   }
@@ -433,10 +579,24 @@ class _ImportWriting extends StatelessWidget {
 /// One exit, one refresh call site: the Setup-side re-read is wired to the
 /// sheet's own `await`, not to this button, so drag-down, barrier tap and system
 /// back are covered by the same line.
+///
+/// **The only state that grows with data**, and the only one that carries no
+/// icon and no error red: a duplicate is a neutral fact and a skipped row is
+/// "your file needs an edit", not "something went wrong". A partial write is a
+/// different fact and gets its own state rather than this success-shaped card —
+/// dressing a partial write in the success surface is the specific misreport
+/// that split exists to prevent.
 class _ImportResult extends StatelessWidget {
-  const _ImportResult({required this.added, required this.onDone});
+  const _ImportResult({
+    required this.added,
+    required this.duplicates,
+    required this.skips,
+    required this.onDone,
+  });
 
   final int added;
+  final int duplicates;
+  final List<ImportSkip> skips;
   final VoidCallback onDone;
 
   @override
@@ -453,12 +613,53 @@ class _ImportResult extends StatelessWidget {
           borderRadius: BorderRadius.circular(24), // lg
           child: Padding(
             padding: const EdgeInsets.all(24), // lg
-            child: Text(
-              importAddedLine(added),
-              style: theme.textTheme.headlineSmall,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // The added line ALWAYS renders; the other two are suppressed at
+                // zero. The order is fixed rather than "whatever is non-zero
+                // first", so the same fact is always in the same place across
+                // imports and the card is read by position, not by scanning.
+                Text(
+                  importAddedLine(added),
+                  style: theme.textTheme.headlineSmall,
+                ),
+                if (duplicates > 0) ...[
+                  const SizedBox(height: 8), // sm
+                  Text(
+                    importDuplicatesLine(duplicates),
+                    style: theme.textTheme.bodyLarge,
+                  ),
+                ],
+                if (skips.isNotEmpty) ...[
+                  const SizedBox(height: 8), // sm
+                  Text(
+                    importSkippedLine(skips.length),
+                    style: theme.textTheme.bodyLarge,
+                  ),
+                ],
+              ],
             ),
           ),
         ),
+        // The skip list sits directly on the sheet's IVORY surface with no card
+        // of its own — peach never sits on peach. Omitted entirely when nothing
+        // was skipped: no label, no empty container, no "0 skipped" line.
+        if (skips.isNotEmpty) ...[
+          const SizedBox(height: 24), // lg
+          Text(kImportSkipListLabel, style: theme.textTheme.labelLarge),
+          const SizedBox(height: 16), // md
+          // A plain Column inside the sheet's ONE scroll view, never a nested
+          // scrollable: a nested scrollable inside a draggable sheet is the
+          // classic gesture conflict. No cap, no show-more and no grouping —
+          // rows stay in file order so the list reads in the same order as the
+          // user's editor.
+          for (var i = 0; i < skips.length; i++) ...[
+            if (i > 0) const SizedBox(height: 16), // md
+            _SkipRow(skip: skips[i]),
+          ],
+        ],
         const SizedBox(height: 24), // lg
         SizedBox(
           height: 64,
@@ -472,6 +673,50 @@ class _ImportResult extends StatelessWidget {
             child: Text('Done', style: theme.textTheme.labelLarge),
           ),
         ),
+      ],
+    );
+  }
+}
+
+/// One row of the skip list: where the problem is, then what it is.
+///
+/// **Two lines, and the second one is optional.** The reason line is never
+/// truncated, because the reason is the actionable half. The question sub-line
+/// below it is the user's own text and is the one deliberate truncation in this
+/// app — one ellipsised line — because its job is recognition, not reading. A
+/// row with no usable content omits the sub-line entirely rather than rendering
+/// an empty one.
+///
+/// **Deliberately NOT floored at 64px.** That floor exists for *tappable* rows
+/// (history rows, topic checkboxes, the replay toggle); these are read-only
+/// static content with no gesture attached, and pinning them to 64px would make
+/// a 40-row list three screens tall for no accessibility gain.
+class _SkipRow extends StatelessWidget {
+  const _SkipRow({required this.skip});
+
+  final ImportSkip skip;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final raw = skip.questionText;
+    final echo = raw == null ? null : sanitizedEcho(raw, kMaxEchoedQuestionChars);
+
+    return Column(
+      key: Key('import-skip-row-${skip.rowNumber}'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(importSkipReason(skip), style: theme.textTheme.bodyLarge),
+        if (echo != null && echo.isNotEmpty) ...[
+          const SizedBox(height: 8), // sm
+          Text(
+            echo,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.bodyLarge,
+          ),
+        ],
       ],
     );
   }
