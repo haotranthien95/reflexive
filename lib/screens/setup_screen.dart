@@ -411,9 +411,23 @@ class _SetupScreenState extends State<SetupScreen> {
   ///
   /// **The re-read hangs off the sheet's own `await`, never off the Done
   /// button's handler.** That one line covers every way the sheet can close —
-  /// Done, drag-down, barrier tap and system back — so there is exactly one
-  /// refresh call site and no exit path that silently skips it (D-51). Wiring it
-  /// to the button would have left three exits unrefreshed.
+  /// Done, barrier tap and system back — so there is exactly one refresh call
+  /// site and no exit path that silently skips it (D-51). Wiring it to the
+  /// button would have left the other two exits unrefreshed.
+  ///
+  /// **Drag-to-dismiss is off, and the handle with it.** The sheet's
+  /// `PopScope(canPop: !writing)` is what keeps a mid-write dismissal from
+  /// orphaning the write — and on Flutter 3.44.6 it does not cover a drag.
+  /// `Navigator.maybePop` consults `popDisposition`, so barrier tap and system
+  /// back are blocked; `_ModalBottomSheetState` instead pops unconditionally
+  /// from `onClosing`, so a drag is not. `ModalBottomSheetRoute.enableDrag` is
+  /// `final`, so it cannot be lifted only for the writing state — the choice is
+  /// per-route, not per-state. Rejected: keeping the gesture and reporting an
+  /// orphaned write on a second surface (a Setup SnackBar). That satisfies
+  /// IMPORT-04 by reporting rather than preventing, and buys back a gesture
+  /// that has three working substitutes here, at the cost of a second place
+  /// import outcomes can appear. `showDragHandle` goes with it: a handle that
+  /// cannot be dragged is an affordance the sheet does not honour.
   ///
   /// [_clearStartMessage] runs too: a "No B1 questions in Travel yet." line is
   /// very likely to have just been made false by the import that closed, and
@@ -424,7 +438,8 @@ class _SetupScreenState extends State<SetupScreen> {
       // The result state's skip list is unbounded (plan 02), so the sheet sizes
       // to its content and scrolls rather than being height-locked.
       isScrollControlled: true,
-      showDragHandle: true,
+      enableDrag: false,
+      showDragHandle: false,
       useSafeArea: true,
       // Ivory: a modal sheet is CHROME, and peach marks content — the two cards
       // inside it are the content.
@@ -432,8 +447,8 @@ class _SetupScreenState extends State<SetupScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)), // lg
       ),
-      // Capped so the scrim and the drag handle stay visible and the sheet never
-      // reads as a full screen — which would undo the point of D-48.
+      // Capped so the scrim stays visible and the sheet never reads as a full
+      // screen — which would undo the point of D-48.
       constraints: BoxConstraints(
         maxHeight: MediaQuery.of(context).size.height * 0.9,
       ),

@@ -909,8 +909,10 @@ class _ImportWriting extends StatelessWidget {
 /// S4 — the outcome, held on screen until the user dismisses it (D-51).
 ///
 /// One exit, one refresh call site: the Setup-side re-read is wired to the
-/// sheet's own `await`, not to this button, so drag-down, barrier tap and system
-/// back are covered by the same line.
+/// sheet's own `await`, not to this button, so barrier tap and system back are
+/// covered by the same line. Drag-to-dismiss is not in that list because the
+/// route disables it — see `_openImportSheet` in `setup_screen.dart` for why a
+/// drag is the one dismissal `PopScope` cannot hold during a write.
 ///
 /// **The only state that grows with data**, and the only one that carries no
 /// icon and no error red: a duplicate is a neutral fact and a skipped row is

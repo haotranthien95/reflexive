@@ -5,6 +5,7 @@ import 'package:englishreflex/data/questions.dart';
 import 'package:englishreflex/db/database_helper.dart';
 import 'package:englishreflex/models/session.dart';
 import 'package:englishreflex/models/session_config.dart';
+import 'package:englishreflex/screens/import_sheet.dart';
 import 'package:englishreflex/screens/practice_screen.dart';
 import 'package:englishreflex/screens/setup_screen.dart';
 import 'package:englishreflex/services/audio_player_service.dart';
@@ -1144,8 +1145,8 @@ void main() {
       await openSheet(tester);
       expect(find.byKey(const Key('import-idle')), findsOneWidget);
       // Never reached a button, never reached the picker — and the topics are
-      // still re-read. Wiring the refresh to Done would have left this exit,
-      // the drag-down and the barrier tap all unrefreshed.
+      // still re-read. Wiring the refresh to Done would have left this exit and
+      // the barrier tap unrefreshed.
       await popTopRoute(tester);
 
       expect(find.byKey(const Key('import-idle')), findsNothing);
@@ -1179,6 +1180,32 @@ void main() {
       // contradicting itself.
       expect(find.byKey(const Key('setup-start-no-questions')), findsNothing);
       expect(helpersPresent(tester), 0);
+    });
+
+    testWidgets('the import sheet is not drag-dismissible, and shows no handle '
+        'promising that it is', (tester) async {
+      await pumpSetup(
+        tester,
+        picker: FakeJsonFilePicker(),
+        writer: FakeQuestionBankWriter(),
+      );
+      await openSheet(tester);
+
+      // The sheet's own PopScope(canPop: !writing) is what stops a mid-write
+      // dismissal from orphaning the write. On Flutter 3.44.6 it does not cover
+      // a drag: Navigator.maybePop consults popDisposition, so barrier tap and
+      // system back are held, but _ModalBottomSheetState pops unconditionally
+      // from onClosing. enableDrag is final on the route, so it cannot be lifted
+      // for the seven states where a drag would be harmless — the guarantee is
+      // per-route. Asserted on the ROUTE, not on a rendered widget: the absent
+      // handle is a consequence, and a test that only counted handles would pass
+      // again the moment someone set showDragHandle:false while restoring drag.
+      final ModalRoute<dynamic> route = ModalRoute.of(
+        tester.element(find.byType(ImportSheet)),
+      )!;
+      expect(route, isA<ModalBottomSheetRoute<void>>());
+      expect((route as ModalBottomSheetRoute<void>).enableDrag, isFalse);
+      expect(route.showDragHandle, isFalse);
     });
   });
 
