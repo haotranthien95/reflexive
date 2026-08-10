@@ -56,6 +56,70 @@ dependencies:
   firebase_core: ^4.13.0
   cloud_firestore: ^6.8.0
 
+  # The in-app JSON importer's one platform dependency (IMPORT-01): opening the
+  # OS document picker so the user can hand the app a question file. The app
+  # requests `FileType.custom` restricted to the single `json` extension, so the
+  # picker itself does the filtering and no in-app "that isn't a JSON file"
+  # screen has to exist. It contributes no widget, no icon and no colour — the
+  # picker is OS chrome this app does not style.
+  #
+  # It is reached only through `lib/services/json_file_picker.dart`, never
+  # directly: like every other plugin here it goes to a method channel, which
+  # raises `MissingPluginException` under `flutter test`.
+  #
+  # Its effect on the MERGED RELEASE manifest's permission set is audited in
+  # plan 04-05 against
+  # build/app/intermediates/merged_manifest/release/.../AndroidManifest.xml —
+  # not against the source manifest, which does not show transitive
+  # contributions. Phase 3's verified set is `RECORD_AUDIO` (this app's own) plus
+  # `INTERNET` and `ACCESS_NETWORK_STATE` (both from cloud_firestore). If this
+  # package widens that set, the `wakelock_plus` row in .claude/CLAUDE.md and
+  # PROJECT.md's matching statement must change with it.
+  file_picker: ^11.0.3
+
+# `file_picker ^11.0.3` and `wakelock_plus ^1.7.0` cannot be resolved together
+# without this: file_picker depends on `win32 ^5.9.0`, wakelock_plus on
+# `win32 ^6.0.1`, and there is no overlapping version. Pub refuses the whole
+# resolution and suggests downgrading one of the two.
+#
+# **Both pins are load-bearing and neither may be moved to break the tie.**
+# CLAUDE.md's stack table pins `wakelock_plus ^1.7.0` explicitly — "never
+# ^1.6.x" — because 1.7.0 ships the fix that defers the Android wakelock toggle
+# when no activity is attached, which is exactly the state D-31's interruption
+# path creates; and no wakelock_plus release exists that wants win32 5 AND has
+# that fix (1.5.2 is the newest on win32 5). `file_picker ^11.0.3` is the newest
+# STABLE picker release — the only file_picker on win32 6 is 12.0.0-beta, and a
+# beta was rejected for a shipped app.
+#
+# So the tie is broken here instead, on `win32`, plus the one transitive package
+# that follows it: wakelock_plus's Linux plugin reads an app name from
+# `package_info_plus`, whose 10.x line requires win32 6 and does not compile
+# against win32 5. Its 9.x line does, and the single API used
+# (`PackageInfo.fromPlatform().appName`) is unchanged across both.
+#
+# **This is safe HERE and would not be in another app.** `win32` is a
+# Windows-only FFI binding, reached only by the Windows implementations these
+# packages conditionally export. EnglishReflex is mobile-only (Flutter,
+# Android + iOS, per PROJECT.md's platform constraint) and has no Windows build;
+# the desktop directories are untouched template scaffolding. Nothing that ships
+# links win32.
+#
+# **It is NOT invisible on the host, which is how the version was chosen.**
+# `flutter test` compiles those Windows Dart sources even on macOS, so a wrong
+# override fails the suite loudly rather than silently — win32 6 breaks
+# file_picker's Windows source, and win32 5 with package_info_plus 10 breaks
+# that one. The pair below is the combination under which the whole suite
+# compiles.
+#
+# **Reversal trigger:** delete both lines the moment `file_picker` 12.x leaves
+# beta — it depends on win32 ^6 and makes the conflict disappear. If this app
+# ever gains a real Windows target before then, these overrides become a live
+# runtime risk rather than a compile-time one and the upgrade stops being
+# optional.
+dependency_overrides:
+  win32: ^5.9.0
+  package_info_plus: ^9.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
