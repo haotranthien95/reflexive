@@ -69,6 +69,52 @@ const String kQuestionLoadErrorMessage =
     "Couldn't reach your question bank — check your connection and tap "
     'START SESSION again.';
 
+/// The single user-facing message for a Start attempt refused because more than
+/// [kMaxTopicsPerQuery] topics are checked (D-61).
+///
+/// **Why this is a sibling of [kTopicsErrorMessage] and [kQuestionLoadErrorMessage]
+/// and not the same string.** Those two name the CONNECTION, because that is
+/// what failed. This one names a limit the user can satisfy right now by
+/// unchecking a topic that is visible on the same screen — the server was never
+/// asked, so there is nothing about the network to report and nothing to retry.
+/// Reusing [kQuestionLoadErrorMessage] here is what the app did before this
+/// phase, and it told a user with 40 topics ticked to check a connection that
+/// was working perfectly.
+///
+/// Same containment rule as its siblings: no exception text, no error code, no
+/// collection name, no document ID, no project ID. The number is written as a
+/// literal rather than interpolated from [kMaxTopicsPerQuery] because the copy
+/// is a fixed, reviewed sentence, not a template — a `const` interpolation would
+/// let an SDK bump silently rewrite user-facing text.
+const String kTooManyTopicsMessage =
+    'You can drill at most 30 topics at once — uncheck a few.';
+
+/// Which of the three things the Start footer's one message can be saying.
+///
+/// **A total map, replacing the is-this-a-failure bool this phase retired.**
+/// That bool answered a two-way question ("icon or no icon"), and the
+/// over-limit case is a third answer: no icon, but not a zero-result either.
+/// Adding a second bool beside it would have made two flags that can both be
+/// true, which is precisely how two helper lines end up on screen at once. An
+/// enum can only ever hold one value, so the footer's four keys stay mutually
+/// exclusive by construction, and `_helper`'s `switch` over it is exhaustive —
+/// a fifth kind added later fails to compile until it has been given a branch,
+/// rather than silently falling through to the last `else`.
+///
+/// Carried alongside `_startMessage` and assigned together with it, in
+/// `_startSession` and `_clearStartMessage` and nowhere else.
+enum StartMessageKind {
+  /// The server answered, and answered with nothing (D-41). No icon.
+  noQuestions,
+
+  /// The bank could not be read (D-38). Red icon — retrying is the fix.
+  bankUnavailable,
+
+  /// More than [kMaxTopicsPerQuery] topics were checked, so no query was ever
+  /// issued (D-61). No icon — it is a setting to change, not a fault.
+  tooManyTopics,
+}
+
 /// The zero-result explanation for a topics-by-level combination the bank has
 /// nothing for (D-41).
 ///
@@ -214,14 +260,19 @@ class _SetupScreenState extends State<SetupScreen> {
   /// nothing to say (it succeeded, or none has happened since the user last
   /// changed something).
   ///
-  /// **One message, so the zero-result and failure helpers are mutually
-  /// exclusive by construction rather than by discipline.** The companion flag
-  /// only chooses the treatment — a red icon means *something went wrong,
-  /// retrying is the fix*; no icon means *change a setting*. That split is the
-  /// footer's honesty signal and the reason both fields are always assigned
-  /// together, in [_startSession] and in [_clearStartMessage] and nowhere else.
+  /// **One message, so the three outcome helpers are mutually exclusive by
+  /// construction rather than by discipline.** The companion [StartMessageKind]
+  /// only chooses the treatment and the key — a red icon means *something went
+  /// wrong, retrying is the fix*; no icon means *change a setting*, which the
+  /// zero-result and the over-limit cases both are, for two different settings.
+  /// That split is the footer's honesty signal.
+  ///
+  /// The two fields are null together and non-null together, and they are only
+  /// ever assigned together — in [_startSession] and in [_clearStartMessage] and
+  /// nowhere else. Null means the last attempt has nothing to say: it succeeded,
+  /// or the user has changed something since.
   String? _startMessage;
-  bool _startMessageIsFailure = false;
+  StartMessageKind? _startMessageKind;
 
   @override
   void initState() {
@@ -409,17 +460,20 @@ class _SetupScreenState extends State<SetupScreen> {
 
   /// Drops whichever Start helper was showing.
   ///
-  /// Both of them describe ONE specific topics-by-level attempt, so both must go
-  /// the moment that attempt stops describing the screen. "No C2 questions in
-  /// Travel yet." sitting under a configuration the user has since changed to B1
-  /// is not a stale message, it is a false one.
+  /// All three of them describe ONE specific attempt, so all three must go the
+  /// moment that attempt stops describing the screen. "No C2 questions in Travel
+  /// yet." sitting under a configuration the user has since changed to B1 is not
+  /// a stale message, it is a false one — and an "at most 30 topics" line under
+  /// a four-topic selection is the same lie about a different setting, made
+  /// worse by the fact that unchecking a topic is precisely the action its copy
+  /// asks for.
   ///
   /// Called from inside an existing `setState` in every place a setting changes
-  /// — every topic, the level and all three sliders — and again at the top of
-  /// [_startSession].
+  /// — every topic, the level and all three sliders — again at the top of
+  /// [_startSession], and once more when the import sheet closes.
   void _clearStartMessage() {
     _startMessage = null;
-    _startMessageIsFailure = false;
+    _startMessageKind = null;
   }
 
   /// Runs the real filtered query, then pushes the session (D-33).
@@ -457,27 +511,46 @@ class _SetupScreenState extends State<SetupScreen> {
 
     List<String>? questions;
     Object? failure;
+    String? failureMessage;
+    StartMessageKind? failureKind;
     try {
       questions = await _questionSource.questionsFor(config);
+    } on TooManyTopicsException catch (error) {
+      // FIRST, and deliberately above the bank-unreachable arm (D-61): the
+      // selection is wider than Firestore's `whereIn` cap, so the guard threw
+      // before a query was ever issued. Nothing about the network failed, and
+      // the fix is on this screen — uncheck a topic.
+      failure = error;
+      failureMessage = kTooManyTopicsMessage;
+      failureKind = StartMessageKind.tooManyTopics;
     } on QuestionBankUnavailableException catch (error) {
       // The bank could not be READ — including the offline zero-documents-from-
       // cache case, which the adapter has already turned into this throw. That
       // is a failure, never a zero-result: "try another level" is only true
       // advice when the server actually answered.
       failure = error;
+      failureMessage = kQuestionLoadErrorMessage;
+      failureKind = StartMessageKind.bankUnavailable;
     } catch (error, stack) {
+      // Anything else is a source misbehaving, and it lands on the read-failure
+      // surface: a query that threw is a query that was not served, whatever
+      // threw. It is never the over-limit string, which claims a specific cause.
       failure = error;
+      failureMessage = kQuestionLoadErrorMessage;
+      failureKind = StartMessageKind.bankUnavailable;
       debugPrintStack(stackTrace: stack);
     }
 
     if (!mounted) return;
 
     if (failure != null) {
+      // Exception detail goes to the console and NOWHERE else, for the
+      // over-limit signal exactly as for the unreachable one.
       debugPrint('Start query failed: $failure');
       setState(() {
         _starting = false;
-        _startMessage = kQuestionLoadErrorMessage;
-        _startMessageIsFailure = true;
+        _startMessage = failureMessage;
+        _startMessageKind = failureKind;
       });
       return;
     }
@@ -494,7 +567,7 @@ class _SetupScreenState extends State<SetupScreen> {
         // Built from the SNAPSHOT, not from the live controls: the message must
         // name the level and topics the query actually ran with.
         _startMessage = noQuestionsMessage(config.level, config.topics);
-        _startMessageIsFailure = false;
+        _startMessageKind = StartMessageKind.noQuestions;
       });
       return;
     }
@@ -687,7 +760,7 @@ class _SetupScreenState extends State<SetupScreen> {
                   _selectedTopics.isEmpty,
               starting: _starting,
               message: _startMessage,
-              messageIsFailure: _startMessageIsFailure,
+              messageKind: _startMessageKind,
               onStart: () => unawaited(_startSession()),
             ),
           ],
@@ -1087,7 +1160,7 @@ class _StartFooter extends StatelessWidget {
     required this.showBlockedHelper,
     required this.starting,
     required this.message,
-    required this.messageIsFailure,
+    required this.messageKind,
     required this.onStart,
   });
 
@@ -1103,15 +1176,17 @@ class _StartFooter extends StatelessWidget {
   /// The last Start attempt's explanation, or null when there is none.
   final String? message;
 
-  /// Whether [message] is a *something went wrong* (red icon, retry is the fix)
-  /// rather than a *change a setting* (no icon).
-  final bool messageIsFailure;
+  /// Which of the three things [message] is saying, and therefore which
+  /// treatment and which key it gets. Null exactly when [message] is null.
+  final StartMessageKind? messageKind;
 
   final VoidCallback onStart;
 
-  /// At most ONE helper line, chosen by an else-if chain so the three keys are
-  /// mutually exclusive by construction rather than by three conditions that
-  /// have to be kept disjoint by hand.
+  /// At most ONE helper line. The blocked helper wins outright, and the other
+  /// three are chosen by an EXHAUSTIVE `switch` over [StartMessageKind] rather
+  /// than by an else-if chain of conditions kept disjoint by hand — so the four
+  /// keys are mutually exclusive by construction, and a fifth helper added later
+  /// cannot compile until it has been given its own branch.
   ///
   /// Nothing at all while the topics are loading, empty or unreachable: the card
   /// directly above already says what is happening and, in the failure case,
@@ -1120,8 +1195,8 @@ class _StartFooter extends StatelessWidget {
   ///
   /// The red-icon-versus-brown-words split is the footer's honesty signal: an
   /// icon means something went wrong and retrying is the fix, no icon means
-  /// change a setting. The words stay brown in both because warm red measures
-  /// 3.03:1 on the ivory footer — icon-safe, text-unsafe.
+  /// change a setting. The words stay brown in all of them because warm red
+  /// measures 3.03:1 on the ivory footer — icon-safe, text-unsafe.
   Widget? _helper(ThemeData theme) {
     if (showBlockedHelper) {
       return Text(
@@ -1131,32 +1206,51 @@ class _StartFooter extends StatelessWidget {
         style: theme.textTheme.bodyLarge,
       );
     }
-    if (message == null) return null;
-    if (!messageIsFailure) {
-      return Text(
-        message!,
-        key: const Key('setup-start-no-questions'),
-        textAlign: TextAlign.center,
-        style: theme.textTheme.bodyLarge,
-      );
-    }
-    return Row(
-      key: const Key('setup-start-error'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(
-          Icons.error_outline_rounded,
-          size: 24, // lg
-          color: theme.colorScheme.error,
+    final String? text = message;
+    final StartMessageKind? kind = messageKind;
+    if (text == null || kind == null) return null;
+
+    return switch (kind) {
+      StartMessageKind.noQuestions => Text(
+          text,
+          key: const Key('setup-start-no-questions'),
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodyLarge,
         ),
-        const SizedBox(width: 8), // sm
-        // Expanded so the message wraps inside the footer rather than
-        // overflowing it — the footer is the one region that does not scroll.
-        Expanded(
-          child: Text(message!, style: theme.textTheme.bodyLarge),
+      // The one helper in this slot that carries an icon, because it is the one
+      // that means *something went wrong*.
+      StartMessageKind.bankUnavailable => Row(
+          key: const Key('setup-start-error'),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              Icons.error_outline_rounded,
+              size: 24, // lg
+              color: theme.colorScheme.error,
+            ),
+            const SizedBox(width: 8), // sm
+            // Expanded so the message wraps inside the footer rather than
+            // overflowing it — the footer is the one region that does not
+            // scroll.
+            Expanded(
+              child: Text(text, style: theme.textTheme.bodyLarge),
+            ),
+          ],
         ),
-      ],
-    );
+      // **NO icon, deliberately, and that absence is load-bearing** (D-61).
+      // This is not a fault; it is a limit the user can satisfy by unchecking a
+      // topic that is visible on the same screen. The red error icon would file
+      // it under "something went wrong, retry" — the exact misreading this
+      // string exists to end. Nothing else about it differs from the
+      // zero-result helper: brown Body, centred, full footer width to wrap into
+      // precisely because no icon is stealing 32px of it.
+      StartMessageKind.tooManyTopics => Text(
+          text,
+          key: const Key('setup-start-too-many-topics'),
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodyLarge,
+        ),
+    };
   }
 
   @override
