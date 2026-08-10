@@ -50,5 +50,10 @@ app.*.map.json
 # the Flutter template's ignore list was written.
 /android/build/
 
+# Xcode's output for the ios/ project, same anchoring problem as `/android/build/`
+# above: the repo-root `/build/` rule does not match it. Left untracked by the
+# first `flutter build ios` run.
+/ios/build/
+
 .claude/worktrees/
 .claude/gsd-core/
