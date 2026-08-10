@@ -19,6 +19,13 @@ import 'package:flutter_test/flutter_test.dart';
 // when plan 03-03 retired the shipped `kSubjects` placeholder, so the one set of
 // stand-in bank data is shared rather than mirrored per test file.
 import '../fixtures/questions.dart';
+// The import path's two scripted seams are IMPORTED, not re-declared. They were
+// authored in `import_sheet_test.dart` and that file already imports
+// [FakeQuestionSource] back out of this one, which is the shape the convention
+// asks for: one double per seam, wherever it happens to be declared. A second
+// copy here would be a second model of the same rule, free to drift from the one
+// the sheet is actually tested against.
+import 'import_sheet_test.dart' show FakeJsonFilePicker, FakeQuestionBankWriter;
 
 /// The one scripted [QuestionSource] behind every read state D-47 puts behind
 /// the seam — loaded, empty, could-not-load and zero-result, for both reads.
@@ -112,6 +119,38 @@ class FakeQuestionSource implements QuestionSource {
 /// what `FirestoreQuestionSource` throws for a `FirebaseException` AND for the
 /// offline zero-documents-from-cache case.
 const Object _kUnreachable = QuestionBankUnavailableException();
+
+/// The scripted "this selection is wider than the `whereIn` cap" outcome (D-61).
+///
+/// A DIFFERENT type from [_kUnreachable], which is the whole point of the split:
+/// the guard throws before any query is issued, so the two must be tellable
+/// apart by a `catch` and must land on two different sentences.
+const Object _kTooManyTopics = TooManyTopicsException();
+
+/// Every key the Start footer's one helper slot can render under.
+///
+/// A deliberately TOTAL list, the same discipline `kPhaseControlKeys` enforces
+/// on the practice screen. Held at file level and iterated rather than asserted
+/// one key at a time, so a fifth helper added later has to be added here too
+/// before the exclusivity test can pass — the invariant cannot be broken
+/// silently by growing the chain.
+const List<Key> _kStartHelperKeys = <Key>[
+  Key('setup-start-blocked'),
+  Key('setup-start-no-questions'),
+  Key('setup-start-error'),
+  Key('setup-start-too-many-topics'),
+];
+
+/// How many of [_kStartHelperKeys] are on screen right now.
+///
+/// The slot is zero-or-one, never many: a Start attempt has exactly one outcome
+/// and each tap replaces the last one, and the blocked helper cannot coexist
+/// with any of them because reaching a query at all requires a checked topic.
+/// Top-level rather than group-local so every group that renders the footer
+/// counts the same four keys.
+int helpersPresent(WidgetTester tester) => _kStartHelperKeys
+    .where((key) => find.byKey(key).evaluate().isNotEmpty)
+    .length;
 
 /// A database double with no engine behind it.
 ///
@@ -252,7 +291,12 @@ void main() {
     }
   });
 
-  Widget host({QuestionSource? source}) => MaterialApp(
+  Widget host({
+    QuestionSource? source,
+    FakeJsonFilePicker? picker,
+    FakeQuestionBankWriter? writer,
+  }) =>
+      MaterialApp(
         theme: _testTheme(),
         home: SetupScreen(
           databaseHelper: _EmptyDatabaseHelper(),
@@ -260,6 +304,12 @@ void main() {
               RecordingService(backend: _SilentRecorderBackend()),
           audioPlayerService:
               AudioPlayerService(backend: _SilentPlaybackBackend()),
+          // Passed straight through to the sheet. Setup never resolves either
+          // real implementation itself, but the sheet would — lazily — the
+          // moment a test tapped its picker button, so the seams are injected
+          // here for the same reason [questionSource] is.
+          jsonFilePicker: picker,
+          questionBankWriter: writer,
           // A whole source, not a subject list: the subject list moved behind
           // the `QuestionSource` seam when Phase 3 sourced it from Firestore,
           // and a scriptable source is what lets one harness drive all four read
@@ -277,12 +327,14 @@ void main() {
   Future<void> pumpSetup(
     WidgetTester tester, {
     QuestionSource? source,
+    FakeJsonFilePicker? picker,
+    FakeQuestionBankWriter? writer,
     Size size = const Size(400, 2000),
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
-    await tester.pumpWidget(host(source: source));
+    await tester.pumpWidget(host(source: source, picker: picker, writer: writer));
     // TWO frames, not one. The subject list stopped being a compile-time
     // constant available on the first frame when Phase 3 sourced it from
     // Firestore: frame one lands before `_loadSubjects()`'s future has been
@@ -731,21 +783,6 @@ void main() {
   });
 
   group('The Start footer — busy, zero-result, could-not-reach', () {
-    /// How many of the three helper lines are on screen.
-    ///
-    /// The slot is zero-or-one, never many: B3 and B4 cannot coexist because a
-    /// query either throws or returns and each tap replaces the last outcome,
-    /// and B2 cannot coexist with either because reaching a query at all
-    /// requires a checked topic.
-    int helpersPresent(WidgetTester tester) => <bool>[
-          find.byKey(const Key('setup-start-blocked')).evaluate().isNotEmpty,
-          find
-              .byKey(const Key('setup-start-no-questions'))
-              .evaluate()
-              .isNotEmpty,
-          find.byKey(const Key('setup-start-error')).evaluate().isNotEmpty,
-        ].where((present) => present).length;
-
     /// The fill the button ACTUALLY paints, not the one it was handed.
     ///
     /// Resolving matters here: `FilledButton` paints `disabledBackgroundColor`
@@ -1026,6 +1063,391 @@ void main() {
       );
       expect(find.text('START SESSION'), findsOneWidget);
       expect(helpersPresent(tester), 0);
+    });
+  });
+
+  group('The Setup AppBar and the import sheet (D-48 / D-51)', () {
+    /// Opens the sheet from the AppBar and lets it settle on its idle state.
+    Future<void> openSheet(WidgetTester tester) async {
+      await tester.tap(find.byKey(const Key('setup-import')));
+      await tester.pumpAndSettle();
+    }
+
+    /// Closes the topmost route WITHOUT going through any button in the sheet.
+    ///
+    /// The refresh hangs off the `await` of `showModalBottomSheet`, not off the
+    /// Done handler, so this is the route that proves it: a dismissal the sheet
+    /// itself never sees still has to re-read the topics.
+    Future<void> popTopRoute(WidgetTester tester) async {
+      tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the AppBar carries exactly two actions, and adding one did '
+        'not move the one already there', (tester) async {
+      await pumpSetup(tester);
+
+      final AppBar appBar = tester.widget<AppBar>(find.byType(AppBar));
+      final List<Widget> actions = appBar.actions!;
+
+      expect(actions, hasLength(2));
+      // `actions:` renders left→right ending at the right edge, so the import
+      // action being FIRST in the list is exactly what leaves the History icon
+      // where the user's thumb already expects it.
+      expect(actions.first.key, const Key('setup-import'));
+      expect((actions.last as IconButton).tooltip, 'Exercise History');
+      // The icon is unlabelled, so the tooltip IS its accessible name.
+      expect(find.byTooltip('Import questions'), findsOneWidget);
+      expect(find.byTooltip('Exercise History'), findsOneWidget);
+      // And it is never disabled: every failure the import can hit lives inside
+      // the sheet, where it has room to be explained.
+      expect(
+        tester
+            .widget<IconButton>(find.byKey(const Key('setup-import')))
+            .onPressed,
+        isNotNull,
+      );
+    });
+
+    testWidgets('closing the sheet through Done re-reads the topics',
+        (tester) async {
+      final source = FakeQuestionSource();
+      await pumpSetup(
+        tester,
+        source: source,
+        picker: FakeJsonFilePicker(),
+        writer: FakeQuestionBankWriter(),
+      );
+      final before = source.subjectsCallCount;
+
+      await openSheet(tester);
+      await tester.tap(find.byKey(const Key('import-choose-file')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('import-done')));
+      await tester.pumpAndSettle();
+
+      expect(source.subjectsCallCount, before + 1);
+    });
+
+    testWidgets('closing the sheet WITHOUT touching Done re-reads the topics '
+        'too — the refresh is wired to the await, not to a button',
+        (tester) async {
+      final source = FakeQuestionSource();
+      await pumpSetup(
+        tester,
+        source: source,
+        picker: FakeJsonFilePicker(),
+        writer: FakeQuestionBankWriter(),
+      );
+      final before = source.subjectsCallCount;
+
+      await openSheet(tester);
+      expect(find.byKey(const Key('import-idle')), findsOneWidget);
+      // Never reached a button, never reached the picker — and the topics are
+      // still re-read. Wiring the refresh to Done would have left this exit,
+      // the drag-down and the barrier tap all unrefreshed.
+      await popTopRoute(tester);
+
+      expect(find.byKey(const Key('import-idle')), findsNothing);
+      expect(source.subjectsCallCount, before + 1);
+    });
+
+    testWidgets('dismissing the sheet drops a stale Start helper',
+        (tester) async {
+      final source = FakeQuestionSource(
+        questionOutcomes: <Object>[<String>[]],
+      );
+      await pumpSetup(
+        tester,
+        source: source,
+        picker: FakeJsonFilePicker(),
+        writer: FakeQuestionBankWriter(),
+      );
+
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('setup-start')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const Key('setup-start-no-questions')), findsOneWidget);
+
+      await openSheet(tester);
+      await popTopRoute(tester);
+
+      // "No B1 questions in Travel yet." is very likely to have just been made
+      // false by the import that closed. Leaving it up would be the app
+      // contradicting itself.
+      expect(find.byKey(const Key('setup-start-no-questions')), findsNothing);
+      expect(helpersPresent(tester), 0);
+    });
+  });
+
+  group('The over-limit Start helper (D-61)', () {
+    /// The four-key exclusivity check, written as a LOOP over
+    /// [_kStartHelperKeys] rather than as four named assertions — so a fifth
+    /// helper added later cannot slip past this invariant.
+    void expectAtMostOneHelper(WidgetTester tester) {
+      final present = <Key>[
+        for (final key in _kStartHelperKeys)
+          if (find.byKey(key).evaluate().isNotEmpty) key,
+      ];
+      expect(present.length, lessThanOrEqualTo(1),
+          reason: 'the footer helper slot is zero-or-one, never many; found '
+              '$present');
+    }
+
+    /// Selects a topic and taps Start, settling the outcome.
+    Future<void> startWith(WidgetTester tester, String topic) async {
+      if (!tester
+          .widget<CheckboxListTile>(find.byKey(Key('setup-topic-$topic')))
+          .value!) {
+        await tester.tap(find.byKey(Key('setup-topic-$topic')));
+        await tester.pump();
+      }
+      await tester.tap(find.byKey(const Key('setup-start')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    testWidgets('an over-limit refusal names the limit and the fix, and is a '
+        'DIFFERENT helper from a bank failure', (tester) async {
+      await pumpSetup(
+        tester,
+        source: FakeQuestionSource(questionOutcomes: <Object>[_kTooManyTopics]),
+      );
+
+      await startWith(tester, 'Travel');
+
+      expect(
+          find.byKey(const Key('setup-start-too-many-topics')), findsOneWidget);
+      expect(find.text(kTooManyTopicsMessage), findsOneWidget);
+      expect(find.textContaining('at most 30 topics at once'), findsOneWidget);
+      // The whole point of the split: this is NOT the connection-blaming
+      // helper, and it is not the zero-result one either.
+      expect(find.byKey(const Key('setup-start-error')), findsNothing);
+      expect(find.text(kQuestionLoadErrorMessage), findsNothing);
+      expect(find.byKey(const Key('setup-start-no-questions')), findsNothing);
+      // No icon. It is a limit the user can satisfy, not a fault — the red
+      // error icon would file it under "something went wrong, retry".
+      expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+      expectAtMostOneHelper(tester);
+      // No exception detail reached the screen.
+      expect(find.textContaining('TooManyTopics'), findsNothing);
+      expect(find.byType(PracticeScreen), findsNothing);
+    });
+
+    testWidgets('the SAME screen renders a different key when the bank is '
+        'unreachable instead', (tester) async {
+      await pumpSetup(
+        tester,
+        source: FakeQuestionSource(
+          questionOutcomes: <Object>[_kTooManyTopics, _kUnreachable],
+        ),
+      );
+
+      await startWith(tester, 'Travel');
+      expect(
+          find.byKey(const Key('setup-start-too-many-topics')), findsOneWidget);
+      expectAtMostOneHelper(tester);
+
+      await startWith(tester, 'Travel');
+      expect(find.byKey(const Key('setup-start-error')), findsOneWidget);
+      expect(find.text(kQuestionLoadErrorMessage), findsOneWidget);
+      expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+      // The previous outcome is REPLACED, never accumulated.
+      expect(
+          find.byKey(const Key('setup-start-too-many-topics')), findsNothing);
+      expectAtMostOneHelper(tester);
+    });
+
+    testWidgets('at most one of the FOUR helper keys, in every state that '
+        'produces one', (tester) async {
+      await pumpSetup(
+        tester,
+        source: FakeQuestionSource(
+          questionOutcomes: <Object>[
+            _kTooManyTopics,
+            <String>[],
+            _kUnreachable,
+          ],
+        ),
+      );
+
+      // Nothing selected: the blocked helper, alone.
+      expect(find.byKey(const Key('setup-start-blocked')), findsOneWidget);
+      expectAtMostOneHelper(tester);
+
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.pump();
+      expectAtMostOneHelper(tester);
+      expect(helpersPresent(tester), 0);
+
+      for (final expected in <Key>[
+        const Key('setup-start-too-many-topics'),
+        const Key('setup-start-no-questions'),
+        const Key('setup-start-error'),
+      ]) {
+        await startWith(tester, 'Travel');
+        expect(find.byKey(expected), findsOneWidget);
+        expectAtMostOneHelper(tester);
+      }
+    });
+
+    testWidgets('the over-limit helper clears on a topic toggle, a level '
+        'change and a slider change', (tester) async {
+      await pumpSetup(
+        tester,
+        source: FakeQuestionSource(questionOutcomes: <Object>[_kTooManyTopics]),
+      );
+
+      // A level change.
+      await startWith(tester, 'Travel');
+      expect(
+          find.byKey(const Key('setup-start-too-many-topics')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('setup-level-C2')));
+      await tester.pump();
+      expect(helpersPresent(tester), 0);
+
+      // A slider change.
+      await startWith(tester, 'Travel');
+      expect(
+          find.byKey(const Key('setup-start-too-many-topics')), findsOneWidget);
+      await tester.drag(
+        find.byKey(const Key('setup-count-slider')),
+        const Offset(-1000, 0),
+      );
+      await tester.pump();
+      expect(helpersPresent(tester), 0);
+
+      // A topic toggle — and unchecking the last one hands the slot straight
+      // back to the blocked helper rather than leaving two messages behind.
+      // Unchecking is also literally the action this string asks for, so it MUST
+      // visibly resolve the message.
+      await startWith(tester, 'Travel');
+      expect(
+          find.byKey(const Key('setup-start-too-many-topics')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.pump();
+      expect(
+          find.byKey(const Key('setup-start-too-many-topics')), findsNothing);
+      expect(find.byKey(const Key('setup-start-blocked')), findsOneWidget);
+      expectAtMostOneHelper(tester);
+    });
+
+    testWidgets('the over-limit path costs the user nothing', (tester) async {
+      await pumpSetup(
+        tester,
+        source: FakeQuestionSource(questionOutcomes: <Object>[_kTooManyTopics]),
+      );
+
+      await tester.tap(find.byKey(const Key('setup-topic-Travel')));
+      await tester.tap(find.byKey(const Key('setup-topic-Work & study')));
+      await tester.tap(find.byKey(const Key('setup-level-A2')));
+      await tester.pump();
+      await tester.drag(
+        find.byKey(const Key('setup-count-slider')),
+        const Offset(-1000, 0),
+      );
+      await tester.drag(
+        find.byKey(const Key('setup-thinking-slider')),
+        const Offset(1000, 0),
+      );
+      await tester.drag(
+        find.byKey(const Key('setup-answer-slider')),
+        const Offset(-1000, 0),
+      );
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('setup-start')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+
+      expect(
+          find.byKey(const Key('setup-start-too-many-topics')), findsOneWidget);
+
+      for (final level in kLevels) {
+        expect(
+          tester.widget<ChoiceChip>(find.byKey(Key('setup-level-$level')))
+              .selected,
+          level == 'A2',
+          reason: '$level after an over-limit Start attempt',
+        );
+      }
+      for (final subject in <String>['Travel', 'Work & study']) {
+        expect(
+          tester
+              .widget<CheckboxListTile>(find.byKey(Key('setup-topic-$subject')))
+              .value,
+          isTrue,
+        );
+      }
+      expect(
+        tester.widget<Text>(find.byKey(const Key('setup-count-readout'))).data,
+        '1',
+      );
+      expect(
+        tester
+            .widget<Text>(find.byKey(const Key('setup-thinking-readout')))
+            .data,
+        '30 sec',
+      );
+      expect(
+        tester.widget<Text>(find.byKey(const Key('setup-answer-readout'))).data,
+        '10 sec',
+      );
+      // The busy button is gone and Start is usable again.
+      expect(find.byKey(const Key('setup-start-busy')), findsNothing);
+      expect(startEnabled(tester), isTrue);
+    });
+  });
+
+  group('A long imported subject name (E6 backstop)', () {
+    testWidgets('grows its topic row at the largest text scale instead of '
+        'clipping', (tester) async {
+      // Deliberately long, and deliberately NOT one of the curated seed names:
+      // the ten short seed subjects would pass this test without proving
+      // anything, and an import can add a subject of any length at all.
+      const String longSubject =
+          'Talking about unexpected changes to your travel plans and how you '
+          'cope with them';
+
+      tester.view.physicalSize = const Size(400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: _testTheme(),
+          home: MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(2.0)),
+            child: SetupScreen(
+              databaseHelper: _EmptyDatabaseHelper(),
+              questionSource: FakeQuestionSource(
+                subjectOutcomes: <Object>[<String>[longSubject]],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      // A RenderFlex overflow THROWS in a test, so this is the assertion.
+      expect(tester.takeException(), isNull);
+      expect(find.text(longSubject), findsOneWidget);
+
+      // The row is a ConstrainedBox(minHeight: 64), not a fixed 64: a wrapped
+      // subject must GROW the row. Clipping would keep it at exactly 64.
+      final Size row =
+          tester.getSize(find.byKey(const Key('setup-topic-$longSubject')));
+      expect(row.height, greaterThan(64));
+
+      // And the topic is still pickable, which is what makes the growth worth
+      // having rather than merely non-crashing.
+      await tester.tap(find.byKey(const Key('setup-topic-$longSubject')));
+      await tester.pump();
+      expect(startEnabled(tester), isTrue);
+      expect(tester.takeException(), isNull);
     });
   });
 

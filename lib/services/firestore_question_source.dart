@@ -61,6 +61,30 @@ class QuestionBankUnavailableException implements Exception {
   String toString() => 'QuestionBankUnavailableException';
 }
 
+/// Thrown when the Start query is refused because the selection is wider than
+/// [kMaxTopicsPerQuery] — the `whereIn` cap — as opposed to the bank being
+/// unreachable (D-61).
+///
+/// **Why this is a sibling of [QuestionBankUnavailableException] and not the
+/// same type.** The two failures have two different causes and two different
+/// fixes: one is "I could not reach the server, retry", the other is "the
+/// server was never asked, uncheck a topic". A shared type would force the
+/// Start handler to guess, and it would guess wrong for whichever cause it did
+/// not name — which is exactly how the over-limit branch ended up blaming the
+/// user's connection for a limit that has nothing to do with the network. A
+/// distinct type is the only thing that lets one `catch` tell them apart, so
+/// two failures get two catch arms and two fixed strings.
+///
+/// Like its sibling this is a developer-facing *signal*, never rendered: its
+/// text exists for the debug console. `SetupScreen` catches it and shows
+/// `kTooManyTopicsMessage`.
+class TooManyTopicsException implements Exception {
+  const TooManyTopicsException();
+
+  @override
+  String toString() => 'TooManyTopicsException';
+}
+
 /// Firestore's hard cap on how many values a `whereIn` clause may carry: **30**.
 ///
 /// **Confirmed against the INSTALLED `cloud_firestore` 6.8.0**, not assumed and
@@ -95,13 +119,19 @@ class QuestionBankUnavailableException implements Exception {
 /// so batching would be unreachable code today, and this project's stated hard
 /// constraint is the leanest code with no speculative abstractions. If the bank
 /// ever grows past [kMaxTopicsPerQuery] DISTINCT subjects, batching stops being
-/// speculative and becomes required — and Phase 4's in-app JSON importer
-/// (IMPORT-01) is the thing that could do it. That is the phase that should
-/// build it, together with its own user-facing copy: the throw currently lands
-/// on the generic Start-failure helper, whose wording names the connection and
-/// is therefore imprecise for this one cause. That imprecision is accepted
-/// deliberately, and only because the branch is unreachable at the current bank
-/// size.
+/// speculative and becomes required.
+///
+/// **The batching is still deferred, and its trigger above is unchanged. What
+/// expired in Phase 4 is the COPY this branch used to land on (D-61).** This
+/// comment used to close by accepting that the throw showed the generic
+/// Start-failure helper — a sentence naming the user's connection — on the
+/// grounds that the branch could not be reached at the bank size of the time.
+/// That acceptance is spent: this phase ships the in-app JSON importer that can
+/// widen the bank at will, and seeds it ten subjects wide, so the branch is one
+/// import away from being reachable by an ordinary user. It therefore throws its
+/// own type, [TooManyTopicsException], and Setup renders its own fixed string
+/// for it (`kTooManyTopicsMessage`), which names the real cause and the real
+/// fix. No query machinery changed; only the honesty of what the user is told.
 const int kMaxTopicsPerQuery = 30;
 
 /// The ONE rule for whether a raw Firestore field value is usable, shared by
@@ -245,7 +275,10 @@ class FirestoreQuestionSource implements QuestionSource {
         'but Firestore allows at most $kMaxTopicsPerQuery values in a `whereIn` '
         'clause. Failing loudly rather than dropping topics to fit (BANK-03).',
       );
-      throw const QuestionBankUnavailableException();
+      // Its OWN type, not the bank-unreachable one (D-61): nothing was asked of
+      // the server here, so telling the user to check their connection would
+      // blame the network for a limit that has nothing to do with it.
+      throw const TooManyTopicsException();
     }
 
     final snapshot = await _read(
