@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 04
 current_phase_name: bulk-import-seed-content-screen-polish
 status: executing
-stopped_at: Phase 4 UI-SPEC approved
-last_updated: "2026-08-09T23:54:57.931Z"
+stopped_at: "Phase 4 plan 04-05 task 4 — on-device UAT deferred by the developer"
+last_updated: "2026-08-10T08:15:00.000Z"
 last_activity: 2026-08-10
-last_activity_desc: Phase 04 execution started
+last_activity_desc: "Phase 04 plan 04-05 tasks 1+3 done; task 4 (Android device UAT) temporarily skipped"
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 19
-  completed_plans: 14
+  completed_plans: 18
 ---
 
 # Project State
@@ -27,12 +27,31 @@ See: .planning/PROJECT.md (updated 2026-08-09)
 
 ## Current Position
 
-Phase: 04 (bulk-import-seed-content-screen-polish) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 04
-Last activity: 2026-08-10 — Phase 04 execution started
+Phase: 04 (bulk-import-seed-content-screen-polish) — EXECUTING (paused at a human gate)
+Plan: 5 of 5 (04-05 in progress — 3 of its 4 tasks done)
+Status: Phase 04 blocked on plan 04-05 Task 4, an on-device checkpoint the developer has temporarily skipped
+Last activity: 2026-08-10 — 04-05 tasks 1+3 complete; task 4 (Android device UAT) deferred
 
-Progress: [████████████████████] 14/14 plans (100%) — Phases 1-3 of 4 complete
+Progress: [████████████████░░░░] 18/19 plans (95%) — Phases 1-3 complete, Phase 4 at 4/5 plans
+
+### Plan 04-05 — partial progress (do NOT treat as complete; no SUMMARY.md exists)
+
+| Task | What it was | Status |
+|------|-------------|--------|
+| 1 | Re-verify the release build's permission set after `file_picker` | ✓ committed `3eba6ec` |
+| 2 | Confirm the one-way wipe of the live `questions` collection (D-58) | ✓ developer chose option-a (wipe) |
+| 3 | Wipe the collection, redeploy rules+indexes, read back zero | ✓ read-back exit 0, `0 documents` |
+| 4 | Seed the live bank on a device through the app's own importer | ○ **DEFERRED — needs a phone** |
+
+Task 1 finding: the merged release manifest declares `RECORD_AUDIO`, `INTERNET`,
+`ACCESS_NETWORK_STATE` and the app-scoped `DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` —
+unchanged from Phase 3; the file picker contributed no permission. It DID require an
+Android build-config fix (KGP scoped to the `file_picker` subproject in
+`android/build.gradle.kts`): the release build had been broken since 04-01 and no host
+test could catch it, because `flutter test` never invokes the Android toolchain.
+
+Task 4 fixtures are pre-built and waiting; regenerate them with the same shapes if the
+scratchpad is gone. Resume with `/gsd-execute-phase 4`.
 
 ## Performance Metrics
 
@@ -84,6 +103,9 @@ None yet.
 
 - [Phase 4]: A device that has never been online has an empty Firestore cache and **cannot start a session** — this is the accepted, documented narrowing of the offline promise (D-39/D-36). Phase 4 seeds the starter content; if seeding is expected to make a fresh install usable offline, that is a different mechanism (bundled seed JSON) and a new decision, not something the current design delivers.
 - [Phase 4]: The open `questions` rules allow unauthenticated **write**. Phase 4's in-app importer is the first client-side writer through them, which is exactly the exposure D-46 accepted — no new decision needed, but the importer should not widen the surface further (no new collections, no rule relaxation).
+- **[Phase 4 — LIVE DATA] The `questions` collection in `reflex-english` is currently EMPTY (0 documents).** Plan 04-05 Task 3 wiped the Phase 3 dev seed on 2026-08-10 (D-58, developer-confirmed), and Task 4 — which re-seeds it — is deferred. **The app therefore shows an empty bank on every device right now and cannot start any session.** D-57 forbids re-seeding by any route other than the app's own importer on a device, so the only fix is to finish Task 4. The content is safe: all 600 rows live in `seed/seed-questions.json` in the repo, which is exactly the way back D-57 kept the one-way door open for.
+- [Phase 4]: Plan 04-05 Task 4 step 13 expects a "not JSON at all" file to show the *unreadable* message with no shape block, but `parseImportFile` routes every content problem — invalid JSON included — to `ImportFileShapeException`, i.e. the shape branch WITH the block. The unreadable branch is reserved for a genuine read/decode failure in `json_file_picker.dart`, and D-62's doc comment says that split is deliberate. Likely a wording defect in the plan step, not in the code; settle it on-device by importing both a bad-UTF-8 file and a readable-but-not-JSON file and recording which surface each produces.
+- [Phase 4]: `ImportSkip.questionText` is documented as null "so the sheet omits the sub-line entirely instead of rendering a blank one", but `echoableContent` tests `isNotEmpty` on the RAW string, so whitespace-only content is echoed. Watch for a blank sub-line on the blank-content skip row during Task 4 step 12.
 
 _Resolved in Phase 2:_ the iOS `AudioInterruptionMode` `-10868` risk was settled by a real-device answered-call test (D-31), and the `arming` window question was resolved by the countdown absorbing it.
 
@@ -101,6 +123,12 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-08-09T14:28:57.706Z
-Stopped at: Phase 4 UI-SPEC approved
-Resume file: .planning/phases/04-bulk-import-seed-content-screen-polish/04-UI-SPEC.md
+Last session: 2026-08-10
+Stopped at: Phase 4 plan 04-05 Task 4 — the on-device import UAT, temporarily skipped by the developer
+Resume file: .planning/phases/04-bulk-import-seed-content-screen-polish/04-05-PLAN.md
+
+To resume: `/gsd-execute-phase 4`. Task 4 needs a physical device — build a fresh release
+APK first (`3eba6ec` fixed a release build that had been broken since 04-01), push
+`seed/seed-questions.json`, and work groups A–H, then hand back so the agent can re-run
+Task 3's wipe before the final restoring import (group I, step 23a). The phase cannot be
+verified or marked complete until that checkpoint passes — group I included.
