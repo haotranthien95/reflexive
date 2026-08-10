@@ -67,14 +67,36 @@ dependencies:
   # directly: like every other plugin here it goes to a method channel, which
   # raises `MissingPluginException` under `flutter test`.
   #
-  # Its effect on the MERGED RELEASE manifest's permission set is audited in
-  # plan 04-05 against
+  # Its effect on the MERGED RELEASE manifest's permission set was audited in
+  # plan 04-05 (2026-08-10) against
   # build/app/intermediates/merged_manifest/release/.../AndroidManifest.xml —
   # not against the source manifest, which does not show transitive
-  # contributions. Phase 3's verified set is `RECORD_AUDIO` (this app's own) plus
-  # `INTERNET` and `ACCESS_NETWORK_STATE` (both from cloud_firestore). If this
-  # package widens that set, the `wakelock_plus` row in .claude/CLAUDE.md and
-  # PROJECT.md's matching statement must change with it.
+  # contributions. **Result: the permission set is UNCHANGED.** It is still
+  # `RECORD_AUDIO` (this app's own) plus `INTERNET` and `ACCESS_NETWORK_STATE`
+  # (both from cloud_firestore) plus the app-scoped signature-level receiver
+  # permission from androidx.core. This package widens it by nothing, so the
+  # `wakelock_plus` row in .claude/CLAUDE.md and PROJECT.md's matching statement
+  # record a re-verification rather than a change.
+  #
+  # **What it DOES cost, found by that same audit:**
+  #
+  # 1. One Android build-config change, WITHOUT WHICH THE RELEASE BUILD DOES NOT
+  #    COMPILE — see the `file_picker` block in android/build.gradle.kts. Under
+  #    this app's AGP 9.0.1 the plugin skips applying the Kotlin Gradle Plugin
+  #    and expects AGP's Built-in Kotlin, which android/gradle.properties
+  #    disables (`android.builtInKotlin=false`); nothing then compiles its
+  #    Kotlin-only Android implementation and GeneratedPluginRegistrant.java
+  #    fails on a missing `FilePickerPlugin` symbol. The host test suite never
+  #    invokes the Android toolchain, which is why this survived from 04-01 until
+  #    the first release build in 04-05.
+  # 2. One `<queries>` entry (GET_CONTENT, mime `*/*`) from the plugin's own
+  #    library manifest — an Android 11+ package-visibility declaration, not a
+  #    permission or an access grant.
+  # 3. Nothing on iOS: the `FileType.custom` path uses
+  #    UIDocumentPickerViewController, which needs no Info.plist
+  #    usage-description key. The plugin's UIImagePickerController code sits on
+  #    its gallery/media paths, which lib/services/json_file_picker.dart never
+  #    calls.
   file_picker: ^11.0.3
 
 # `file_picker ^11.0.3` and `wakelock_plus ^1.7.0` cannot be resolved together

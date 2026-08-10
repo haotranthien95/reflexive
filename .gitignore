@@ -44,5 +44,11 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Gradle's own output for the :android root project. The `/build/` rule above is
+# anchored to the repo root and does not match this one, so a release build left
+# `android/build/reports/` untracked until plan 04-05 built the first APK since
+# the Flutter template's ignore list was written.
+/android/build/
+
 .claude/worktrees/
 .claude/gsd-core/

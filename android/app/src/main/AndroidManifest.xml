@@ -22,6 +22,13 @@
          which the Flutter embedding pulls in and Firebase does not. No
          analytics, advertising-ID, location or account permission.
 
+         RE-VERIFIED 2026-08-10 (Phase 4 plan 05), after file_picker was added:
+         the set above is UNCHANGED — the picker contributes no permission. It
+         does contribute one non-permission element, a <queries> entry for
+         GET_CONTENT with mime type */*, which is why the merged <queries> block
+         has two <intent> children where this file has one. Package visibility,
+         not access.
+
          Re-run that inspection whenever a dependency changes, and grep the
          merged output for `<uses-permission` rather than for `android.permission.*`
          — the latter cannot match an app-namespaced permission, which is how the
