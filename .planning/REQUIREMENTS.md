@@ -55,17 +55,17 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### JSON Import
 
-- [ ] **IMPORT-01**: User can pick a local JSON file to bulk-import questions into the Firestore bank
-- [ ] **IMPORT-02**: Import accepts exactly the format `{"data": [{"content": "...", "subject": "...", "level": "..."}, ...]}`
-- [ ] **IMPORT-03**: Each imported question gets `id` and `created_at` auto-generated at import time
-- [ ] **IMPORT-04**: Import reports success/failure per row rather than failing silently or partially
+- [x] **IMPORT-01**: User can pick a local JSON file to bulk-import questions into the Firestore bank
+- [x] **IMPORT-02**: Import accepts exactly the format `{"data": [{"content": "...", "subject": "...", "level": "..."}, ...]}`
+- [x] **IMPORT-03**: Each imported question gets `id` and `created_at` auto-generated at import time
+- [x] **IMPORT-04**: Import reports success/failure per row rather than failing silently or partially
 - [ ] **IMPORT-05**: The app ships with ~10 general-purpose topics seeded in the question bank so the first run isn't empty
 
 ### Visual Design
 
 - [x] **UI-01**: Interface uses large, easily readable font sizes throughout (read-at-arm's-length, then speak)
 - [x] **UI-02**: Visual style is simple, colorful, and friendly/cartoon-like — not corporate/minimal-grey
-- [ ] **UI-03**: The app has exactly 3 core screens (Setup, Practice Session, History) with no extraneous navigation
+- [x] **UI-03**: The app has exactly 3 core screens (Setup, Practice Session, History) with no extraneous navigation
 
 ## v2 Requirements
 
@@ -128,14 +128,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BANK-01 | Phase 3 | Complete |
 | BANK-02 | Phase 3 | Complete |
 | BANK-03 | Phase 3 | Complete (device UAT pending) |
-| IMPORT-01 | Phase 4 | Pending |
-| IMPORT-02 | Phase 4 | Pending |
-| IMPORT-03 | Phase 4 | Pending |
-| IMPORT-04 | Phase 4 | Pending |
-| IMPORT-05 | Phase 4 | Pending |
+| IMPORT-01 | Phase 4 | Complete (device UAT pending) |
+| IMPORT-02 | Phase 4 | Complete |
+| IMPORT-03 | Phase 4 | Complete (device UAT pending) |
+| IMPORT-04 | Phase 4 | Complete (device UAT pending) |
+| IMPORT-05 | Phase 4 | Seed authored; loaded on-device in plan 04-05 |
 | UI-01 | Phase 1 | Complete (device UAT pending) |
 | UI-02 | Phase 1 | Complete (device UAT pending) |
-| UI-03 | Phase 4 | Pending |
+| UI-03 | Phase 4 | Complete |
 
 **Coverage:**
 
@@ -145,4 +145,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-08-07*
-*Last updated: 2026-08-09 — Phase 3 statuses recorded (SETUP-01, BANK-01..03). `Complete` means proven by automated tests; `Complete (device UAT pending)` means the implementation is done but the remaining evidence is an on-device check that has not been performed. SETUP-01 and BANK-03 carry that qualifier because the Firestore adapter is deliberately not host-testable (D-47) — the topic checkboxes rendering real seeded subjects, and the filtered session query returning them, are proven on a device rather than in `flutter test`. BANK-01 and BANK-02 are unqualified: the schema is asserted against the live project by `node tool/seed_questions.mjs --verify`, and the topic-derivation rule is a pure function under direct unit test.*
+*Last updated: 2026-08-10 — Phase 4 statuses recorded (IMPORT-01..05, UI-03).*
+
+*`Complete` means proven by automated tests. `Complete (device UAT pending)` means the implementation is done but the remaining evidence is an on-device check that has not been performed yet.*
+
+*SETUP-01 and BANK-03 carry that qualifier because the Firestore adapter is deliberately not host-testable (D-47) — the topic checkboxes rendering real seeded subjects, and the filtered session query returning them, are proven on a device rather than in `flutter test`.*
+
+*IMPORT-01, IMPORT-03 and IMPORT-04 carry it for the same D-47 reason on the write side: the picker adapter and the Firestore writer sit past the seam, so the real file pick, the four-field document body with its strictly increasing `created_at`, and the multi-chunk commit above the 500-op batch cap are all proven by plan 04-05's on-device seed import. Everything on the host side of the seam — the whole-file validation, the per-row skip report keyed by file position, the duplicate pass and all eight sheet states, including the partial-write outcome — is under direct test. IMPORT-02 is unqualified: it is entirely the pure `parseImportFile` contract.*
+
+*IMPORT-05 is deliberately still open. `seed/seed-questions.json` exists in the repo, holds 600 rows across ten topics at all six CEFR levels, and is validated against the shipped importer's own code by `test/services/seed_import_file_test.dart` — but the requirement is that the **bank** is not empty, and the bank is in Firestore. It closes when plan 04-05 loads the file on a device.*
+
+*BANK-01 and BANK-02 remain unqualified, on new evidence. The mechanism that used to justify BANK-01 — the `--verify` mode of the one-off Node seed script under `tool/` — was **retired with that directory in this phase** (D-57: two write paths into one collection with different rules is what the deletion removes). Its evidence is replaced, not merely dropped: the document contract is now asserted by the app's own import path, which writes exactly `content`/`subject`/`level`/`created_at` with the auto-generated key as the schema's `id`, and is read back on-device by the plan 04-05 seed import. BANK-02's topic-derivation rule was never the script's to prove — `normalizeSubjects` is a pure function under direct unit test and still is.*
