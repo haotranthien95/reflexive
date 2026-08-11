@@ -27,13 +27,13 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>EnglishReflex needs camera access for video recording features.</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>EnglishReflex needs location access for location-based features.</string>
+	<string>EnglishReflex does not use the camera. This description is required only because the file picker used to import a question-bank JSON file also contains camera code.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>EnglishReflex needs microphone access to record your spoken practice answers.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>EnglishReflex needs access to your photo library to import media.</string>
+	<string>EnglishReflex does not read your photo library. This description is required only because the file picker used to import a question-bank JSON file also contains photo-library code.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>EnglishReflex does not use location services. This description is required only because the file picker used to import a question-bank JSON file also contains location code.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -57,6 +57,8 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
